@@ -37,6 +37,7 @@ package tikv
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"strconv"
 	"strings"
 	"sync"
@@ -67,6 +68,7 @@ type SafePointKV interface {
 	Put(k string, v string) error
 	Get(k string) (string, error)
 	GetWithPrefix(k string) ([]*mvccpb.KeyValue, error)
+	SafePointKey() string
 	Close() error
 }
 
@@ -112,23 +114,46 @@ func (w *MockSafePointKV) GetWithPrefix(prefix string) ([]*mvccpb.KeyValue, erro
 	return kvs, nil
 }
 
+// SafePointKey implements the KeyPath method for SafePointKV
+func (w *MockSafePointKV) SafePointKey() string {
+	return GcSavedSafePoint
+}
+
 // Close implements the Close method for SafePointKV
 func (w *MockSafePointKV) Close() error {
 	return nil
 }
 
+type CreateOption func(w SafePointKV) error
+
+func WithEtcdTenantID(tenantID uint16) CreateOption {
+	return func(s SafePointKV) error {
+		w, ok := s.(*EtcdSafePointKV)
+		if !ok {
+			return errors.New("Cannot create etcd safepoint KV with tenant id")
+		}
+		w.path = fmt.Sprintf("/tidb/store/gcworker/tenant/%d/saved_safe_point", tenantID)
+		return nil
+	}
+}
+
 // EtcdSafePointKV implements SafePointKV at runtime
 type EtcdSafePointKV struct {
-	cli *clientv3.Client
+	cli  *clientv3.Client
+	path string
 }
 
 // NewEtcdSafePointKV creates an instance of EtcdSafePointKV
-func NewEtcdSafePointKV(addrs []string, tlsConfig *tls.Config) (*EtcdSafePointKV, error) {
+func NewEtcdSafePointKV(addrs []string, tlsConfig *tls.Config, opts ...CreateOption) (*EtcdSafePointKV, error) {
 	etcdCli, err := createEtcdKV(addrs, tlsConfig)
 	if err != nil {
 		return nil, err
 	}
-	return &EtcdSafePointKV{cli: etcdCli}, nil
+	w := &EtcdSafePointKV{cli: etcdCli, path: GcSavedSafePoint}
+	for _, opt := range opts {
+		opt(w)
+	}
+	return w, nil
 }
 
 // Put implements the Put method for SafePointKV
@@ -153,6 +178,11 @@ func (w *EtcdSafePointKV) Get(k string) (string, error) {
 	return "", nil
 }
 
+// SafePointKey implements the KeyPath method for SafePointKV
+func (w *EtcdSafePointKV) SafePointKey() string {
+	return w.path
+}
+
 // GetWithPrefix implements the GetWithPrefix for SafePointKV
 func (w *EtcdSafePointKV) GetWithPrefix(k string) ([]*mvccpb.KeyValue, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*15)
@@ -171,7 +201,7 @@ func (w *EtcdSafePointKV) Close() error {
 
 func saveSafePoint(kv SafePointKV, t uint64) error {
 	s := strconv.FormatUint(t, 10)
-	err := kv.Put(GcSavedSafePoint, s)
+	err := kv.Put(kv.SafePointKey(), s)
 	if err != nil {
 		logutil.BgLogger().Error("save safepoint failed", zap.Error(err))
 		return err
@@ -180,7 +210,7 @@ func saveSafePoint(kv SafePointKV, t uint64) error {
 }
 
 func loadSafePoint(kv SafePointKV) (uint64, error) {
-	str, err := kv.Get(GcSavedSafePoint)
+	str, err := kv.Get(kv.SafePointKey())
 
 	if err != nil {
 		return 0, err
