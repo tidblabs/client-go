@@ -289,6 +289,8 @@ func (c *pdClient) LoadKeyspace(ctx context.Context, name string) (*keyspacepb.K
 	return nil, nil
 }
 
-func (c *pdClient) WatchKeyspaces(ctx context.Context) (chan []*keyspacepb.KeyspaceMeta, error) {
+func (c *pdClient) WatchKeyspaces(ctx context.Context) (chan []*keyspacepb.KeyspaceMeta, error) {}
+
+func (c *pdClient) TokenBucket(ctx context.Context, req *pdpb.TokenBucketRequest) (*pdpb.TokenBucketResponse, error) {
 	return nil, nil
 }

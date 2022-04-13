@@ -7,6 +7,7 @@ replace github.com/tikv/pd/client => github.com/tidbcloud/pd-cse/client v0.0.0-2
 require (
 	github.com/cznic/mathutil v0.0.0-20181122101859-297441e03548
 	github.com/dgryski/go-farm v0.0.0-20190423205320-6a90982ecee2
+	github.com/elastic/gosigar v0.14.2
 	github.com/gogo/protobuf v1.3.2
 	github.com/golang/protobuf v1.5.2
 	github.com/google/btree v1.1.2
@@ -30,10 +31,16 @@ require (
 	go.uber.org/atomic v1.9.0
 	go.uber.org/goleak v1.1.12
 	go.uber.org/zap v1.20.0
+	golang.org/x/net v0.0.0-20211008194852-3b03d305991f // indirect
 	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c
+	golang.org/x/sys v0.0.0-20220209214540-3681064d5158 // indirect
+	golang.org/x/text v0.3.7 // indirect
+	google.golang.org/appengine v1.4.0
+	google.golang.org/genproto v0.0.0-20210624195500-8bfb893ecb84 // indirect
 	google.golang.org/grpc v1.43.0
 )
 
+<<<<<<< HEAD
 require (
 	github.com/benbjohnson/clock v1.1.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
@@ -60,3 +67,8 @@ require (
 	gopkg.in/yaml.v3 v3.0.0-20210107192922-496545a6307b // indirect
 	stathat.com/c/consistent v1.0.0 // indirect
 )
+=======
+replace github.com/pingcap/kvproto => github.com/tidblabs/kvproto v0.0.0-20220717141846-8f5445390a32
+
+replace github.com/tikv/pd/client => github.com/tidblabs/pd/client v0.0.0-20220717143221-433427468de1
+>>>>>>> 49b1a20 (*: init tenant cost client)

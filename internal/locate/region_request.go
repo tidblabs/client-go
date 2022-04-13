@@ -109,6 +109,16 @@ type RegionRequestSender struct {
 	RegionRequestRuntimeStats
 }
 
+type SenderOption func(rrs *RegionRequestSender)
+
+// WithReplicaSelector sets the replica selector.
+func WithReplicaSelector(replicaSelector *replicaSelector) SenderOption {
+	return func(rrs *RegionRequestSender) {
+		rrs.replicaSelector = replicaSelector
+	}
+}
+
+// SendReq sends a request to tikv server.
 // RegionRequestRuntimeStats records the runtime stats of send region requests.
 type RegionRequestRuntimeStats struct {
 	Stats map[tikvrpc.CmdType]*RPCRuntimeStats
@@ -189,12 +199,16 @@ func RecordRegionRequestRuntimeStats(stats map[tikvrpc.CmdType]*RPCRuntimeStats,
 }
 
 // NewRegionRequestSender creates a new sender.
-func NewRegionRequestSender(regionCache *RegionCache, client client.Client) *RegionRequestSender {
-	return &RegionRequestSender{
+func NewRegionRequestSender(regionCache *RegionCache, client client.Client, opts ...SenderOption) *RegionRequestSender {
+	rrs := &RegionRequestSender{
 		regionCache: regionCache,
 		apiVersion:  regionCache.codec.GetAPIVersion(),
 		client:      client,
 	}
+	for _, opt := range opts {
+		opt(rrs)
+	}
+	return rrs
 }
 
 // GetRegionCache returns the region cache.
