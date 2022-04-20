@@ -45,6 +45,9 @@ import (
 	"math"
 	"sync"
 	"time"
+
+	"github.com/pingcap/log"
+	"go.uber.org/zap"
 )
 
 // Limit defines the maximum frequency of some events.
@@ -94,7 +97,9 @@ type Limiter struct {
 	// last is the last time the limiter's tokens field was updated
 	last time.Time
 	// lastEvent is the latest time of a rate-limited event (past or future)
-	lastEvent time.Time
+	lastEvent           time.Time
+	notifyThreshold     float64
+	lowTokensNotifyChan chan struct{}
 }
 
 // Limit returns the maximum overall event rate.
@@ -116,11 +121,16 @@ func (lim *Limiter) Burst() int {
 
 // NewLimiter returns a new Limiter that allows events up to rate r and permits
 // bursts of at most b tokens.
-func NewLimiter(r Limit, b int) *Limiter {
-	return &Limiter{
-		limit: r,
-		burst: b,
+func NewLimiter(r Limit, b int, lowTokensNotifyChan chan struct{}) *Limiter {
+	lim := &Limiter{
+		limit:               r,
+		last:                time.Now(),
+		tokens:              float64(b),
+		burst:               b,
+		lowTokensNotifyChan: lowTokensNotifyChan,
 	}
+	log.Info("new limiter", zap.String("limiter", fmt.Sprintf("%+v", lim)))
+	return lim
 }
 
 // Allow is shorthand for AllowN(time.Now(), 1).
@@ -207,9 +217,9 @@ func (r *Reservation) CancelAt(now time.Time) {
 	now, _, tokens := r.lim.advance(now)
 	// calculate new number of tokens
 	tokens += restoreTokens
-	if burst := float64(r.lim.burst); tokens > burst {
-		tokens = burst
-	}
+	// if burst := float64(r.lim.burst); tokens > burst {
+	// 	tokens = burst
+	// }
 	// update state
 	r.lim.last = now
 	r.lim.tokens = tokens
@@ -278,7 +288,7 @@ func (lim *Limiter) WaitN(ctx context.Context, n int) (err error) {
 	// Reserve
 	r := lim.reserveN(now, n, waitLimit)
 	if !r.ok {
-		return fmt.Errorf("rate: Wait(n=%d) would exceed context deadline", n)
+		return fmt.Errorf("rate: Wait(n=%d) Burst(b=%d) would exceed context deadline", n, burst)
 	}
 	// Wait if necessary
 	delay := r.DelayFrom(now)
@@ -286,6 +296,10 @@ func (lim *Limiter) WaitN(ctx context.Context, n int) (err error) {
 		return nil
 	}
 	t := time.NewTimer(delay)
+	if delay > 1*time.Second {
+		log.Warn("[tenant controllor] Need wait N", zap.Time("now", now), zap.Duration("delay", delay), zap.Int("n", n))
+	}
+
 	defer t.Stop()
 	select {
 	case <-t.C:
@@ -308,6 +322,10 @@ func (lim *Limiter) SetLimit(newLimit Limit) {
 // or underutilized by those which reserved (using Reserve or Wait) but did not yet act
 // before SetLimitAt was called.
 func (lim *Limiter) SetLimitAt(now time.Time, newLimit Limit) {
+	select {
+	case <-lim.lowTokensNotifyChan:
+	default:
+	}
 	lim.mu.Lock()
 	defer lim.mu.Unlock()
 
@@ -316,6 +334,32 @@ func (lim *Limiter) SetLimitAt(now time.Time, newLimit Limit) {
 	lim.last = now
 	lim.tokens = tokens
 	lim.limit = newLimit
+	log.Warn("[tenant controllor] setLimit", zap.Float64("NewTokens", lim.tokens), zap.Float64("NewRate", float64(lim.limit)))
+	lim.maybeNotify(now)
+}
+
+// SetupNotification enables the notification at the given threshold.
+func (lim *Limiter) SetupNotification(now time.Time, threshold float64) {
+	lim.advance(now)
+	lim.notifyThreshold = threshold
+}
+
+// notify tries to send a non-blocking notification on notifyCh and disables
+// further notifications (until the next Reconfigure or StartNotification).
+func (lim *Limiter) notify() {
+	lim.notifyThreshold = 0
+	select {
+	case lim.lowTokensNotifyChan <- struct{}{}:
+	default:
+	}
+}
+
+// maybeNotify checks if it's time to send the notification and if so, performs
+// the notification.
+func (lim *Limiter) maybeNotify(now time.Time) {
+	if lim.notifyThreshold > 0 && lim.tokens < lim.notifyThreshold {
+		lim.notify()
+	}
 }
 
 // SetBurst is shorthand for SetBurstAt(time.Now(), newBurst).
@@ -342,10 +386,41 @@ func (lim *Limiter) RemoveTokens(now time.Time, amount float64) {
 	now, _, tokens := lim.advance(now)
 	lim.last = now
 	lim.tokens = tokens - amount
+	//	log.Warn("RemoveTokens", zap.Float64("NewTokens", lim.tokens))
+	lim.maybeNotify(now)
+}
+
+type tokenBucketReconfigureArgs struct {
+	NewTokens float64
+
+	NewRate float64
+
+	NotifyThreshold float64
+}
+
+func (lim *Limiter) Reconfigure(now time.Time, args tokenBucketReconfigureArgs) {
+	select {
+	case <-lim.lowTokensNotifyChan:
+	default:
+	}
+	lim.mu.Lock()
+	defer lim.mu.Unlock()
+	log.Debug("[tenant controllor] before reconfigure", zap.Float64("NewTokens", lim.tokens), zap.Float64("NewRate", float64(lim.limit)), zap.Float64("NotifyThreshold", args.NotifyThreshold), zap.Any("args", args))
+	now, _, tokens := lim.advance(now)
+	lim.last = now
+	lim.tokens = tokens + args.NewTokens
+	lim.limit = Limit(args.NewRate)
+	lim.notifyThreshold = args.NotifyThreshold
+	lim.maybeNotify(now)
+	log.Debug("[tenant controllor] bfter reconfigure", zap.Float64("NewTokens", lim.tokens), zap.Float64("NewRate", float64(lim.limit)), zap.Float64("NotifyThreshold", args.NotifyThreshold), zap.Any("args", args))
 }
 
 // SetTokens decreases the amount of tokens currently available.
 func (lim *Limiter) SetTokens(now time.Time, amount float64) {
+	select {
+	case <-lim.lowTokensNotifyChan:
+	default:
+	}
 	lim.mu.Lock()
 	defer lim.mu.Unlock()
 	now, _, _ = lim.advance(now)
@@ -376,15 +451,17 @@ func (lim *Limiter) reserveN(now time.Time, n int, maxFutureReserve time.Duratio
 			timeToAct: now,
 		}
 	} else if lim.limit == 0 {
+		// TODO(nolouch), remove burst, just use tokens
 		var ok bool
-		if lim.burst >= n {
+		if lim.tokens >= float64(n) {
 			ok = true
-			lim.burst -= n
+			//log.Warn("ReserveN-1", zap.Float64("tokens", lim.tokens), zap.Float64("new tokens", lim.tokens-float64(n)), zap.Float64("NewRate", float64(lim.limit)), zap.Int("n", n))
+			lim.tokens -= float64(n)
 		}
 		return Reservation{
 			ok:        ok,
 			lim:       lim,
-			tokens:    lim.burst,
+			tokens:    int(lim.tokens),
 			timeToAct: now,
 		}
 	}
@@ -392,8 +469,9 @@ func (lim *Limiter) reserveN(now time.Time, n int, maxFutureReserve time.Duratio
 	now, last, tokens := lim.advance(now)
 
 	// Calculate the remaining number of tokens resulting from the request.
+	//log.Info("advance token", zap.Float64("tokens", tokens), zap.Float64("new tokens", tokens-float64(n)))
 	tokens -= float64(n)
-
+	lim.maybeNotify(now)
 	// Calculate the wait duration
 	var waitDuration time.Duration
 	if tokens < 0 {
@@ -413,7 +491,7 @@ func (lim *Limiter) reserveN(now time.Time, n int, maxFutureReserve time.Duratio
 		r.tokens = n
 		r.timeToAct = now.Add(waitDuration)
 	}
-
+	//	log.Warn("ReserveN", zap.Float64("tokens", lim.tokens), zap.Float64("NewTokens", tokens), zap.Bool("ok", ok), zap.Float64("Rate", float64(lim.limit)), zap.Int("n", n))
 	// Update state
 	if ok {
 		lim.last = now
@@ -438,10 +516,12 @@ func (lim *Limiter) advance(now time.Time) (newNow time.Time, newLast time.Time,
 	// Calculate the new number of tokens, due to time that passed.
 	elapsed := now.Sub(last)
 	delta := lim.limit.tokensFromDuration(elapsed)
+	//log.Info("advance", zap.Float64("tokens", lim.tokens), zap.Float64("delta", delta), zap.Duration("elapsed", elapsed))
 	tokens := lim.tokens + delta
-	if burst := float64(lim.burst); tokens > burst {
-		tokens = burst
-	}
+	// if burst := float64(lim.burst); tokens > burst {
+	// 	tokens = burst
+	// }
+	//log.Warn("advance", zap.Float64("delta", delta), zap.Float64("tokens", tokens), zap.Float64("limit tokens", float64(lim.tokens)))
 	return now, last, tokens
 }
 
