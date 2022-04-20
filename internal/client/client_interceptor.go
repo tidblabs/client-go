@@ -18,6 +18,7 @@ import (
 	"context"
 	"time"
 
+	coprocessor "github.com/pingcap/kvproto/pkg/coprocessor"
 	tenant_interceptor "github.com/tikv/client-go/v2/keyspace/interceptor"
 	"github.com/tikv/client-go/v2/keyspace/tenantcost"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -37,19 +38,35 @@ func NewInterceptedClient(client Client) Client {
 	return interceptedClient{client}
 }
 
+func FromResponse(resp *tikvrpc.Response) string {
+	switch res := resp.Resp.(type) {
+	case *coprocessor.Response:
+		return res.String()
+	}
+	return ""
+}
+
 func (r interceptedClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
-	var tenantRPCInterceptor interceptor.RPCInterceptor
+	var finalInterceptor interceptor.RPCInterceptor
 	if TenantKVControllor != nil {
-		tenantRPCInterceptor = func(next interceptor.RPCInterceptorFunc) interceptor.RPCInterceptorFunc {
+		finalInterceptor = func(next interceptor.RPCInterceptorFunc) interceptor.RPCInterceptorFunc {
 			return func(target string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 				reqInfo := tenantcost.MakeRequestInfo(req)
 				err := TenantKVControllor.OnRequestWait(ctx, reqInfo)
 				if err != nil {
 					return nil, err
 				}
+				// stack := debug.Stack()
+				// skipLog := strings.Contains(string(stack), "ddl") || strings.Contains(string(stack), "updateSafeTS") || strings.Contains(string(stack), "statistics/handle/update") || strings.Contains(string(stack), "loadSchemaInLoop")
+				// if !skipLog {
+				// 	log.L().Sugar().Infof("[%s] before interceptor, type: %s, req: %+v, req_cost: %+v\n %s", target, req.Type.String(), req, reqInfo, debug.Stack())
+				// }
 				resp, err := next(target, req)
 				if resp != nil {
 					respInfo := tenantcost.MakeResponseInfo(resp)
+					// if !skipLog {
+					// 	log.L().Sugar().Infof("[%s] after interceptor, resp: %+v, resp_string: %s, resp_cost: %+v", target, resp, FromResponse(resp), respInfo)
+					// }
 					TenantKVControllor.OnResponse(context.Background(), reqInfo, respInfo)
 				}
 				return resp, err
@@ -57,10 +74,6 @@ func (r interceptedClient) SendRequest(ctx context.Context, addr string, req *ti
 		}
 	}
 
-	var finalInterceptor interceptor.RPCInterceptor
-	if tenantRPCInterceptor != nil {
-		finalInterceptor = tenantRPCInterceptor
-	}
 	if it := interceptor.GetRPCInterceptorFromCtx(ctx); it != nil {
 		if finalInterceptor != nil {
 			finalInterceptor = interceptor.ChainRPCInterceptors(finalInterceptor, it)
