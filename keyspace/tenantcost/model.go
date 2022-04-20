@@ -12,10 +12,10 @@ import (
 type RequestUnit float64
 
 const (
-	readRequestCost  = 0.5
-	readCostPerMB    = 50
+	readRequestCost  = 1
+	readCostPerMB    = 0.5
 	writeRequestCost = 5
-	writeCostPerMB   = 2000
+	writeCostPerMB   = 200
 	podCPUSecondCost = 1000
 )
 
@@ -80,7 +80,6 @@ func (c *Config) ResponseCost(bri ResponseInfo) RequestUnit {
 // upfront. Specifically: whether it is a read or a write and the write size (if
 // it's a write).
 type RequestInfo struct {
-	// writeBytes is the write size if the request is a write, or -1 if it is a read.
 	writeBytes int64
 }
 
@@ -129,9 +128,10 @@ type ResponseInfo struct {
 // MakeResponseInfo extracts the relevant information from a BatchResponse.
 func MakeResponseInfo(resp *tikvrpc.Response) ResponseInfo {
 	var (
-		readBytes int64
-		detailV2  *kvrpcpb.ExecDetailsV2
-		detail    *kvrpcpb.ExecDetails
+		readBytes    int64
+		detailV2     *kvrpcpb.ExecDetailsV2
+		detail       *kvrpcpb.ExecDetails
+		respDataSize int64
 	)
 	if resp.Resp == nil {
 		return ResponseInfo{readBytes}
@@ -140,21 +140,25 @@ func MakeResponseInfo(resp *tikvrpc.Response) ResponseInfo {
 	case *coprocessor.Response:
 		detailV2 = r.ExecDetailsV2
 		detail = r.ExecDetails
+		respDataSize = int64(r.Data.Size())
 	case *tikvrpc.CopStreamResponse:
 		// streaming request returns io.EOF, so the first CopStreamResponse.Response maybe nil.
 		if r.Response != nil {
 			detailV2 = r.Response.ExecDetailsV2
 			detail = r.Response.ExecDetails
 		}
-	default:
-		panic("unreachable")
-
+		respDataSize = int64(r.Data.Size())
+	case *kvrpcpb.GetResponse:
+		detailV2 = r.ExecDetailsV2
+	case *kvrpcpb.ScanResponse:
+		readBytes = int64(r.Size())
 	}
 
-	if detailV2 != nil && detailV2.TimeDetail != nil {
-		readBytes = int64(detailV2.ScanDetailV2.RocksdbBlockReadByte)
-	} else if detail != nil && detail.TimeDetail != nil {
-		readBytes = detail.ScanDetail.Lock.ReadBytes + detail.ScanDetail.Write.ReadBytes + detail.ScanDetail.Write.ReadBytes
+	if detailV2 != nil && detailV2.ScanDetailV2 != nil {
+		readBytes = int64(detailV2.ScanDetailV2.GetProcessedVersionsSize())
+	} else if detail != nil && detail.ScanDetail != nil {
+		// readBytes = detail.ScanDetail.Lock.ReadBytes + detail.ScanDetail.Write.ReadBytes + detail.ScanDetail.Write.ReadBytes
+		readBytes = respDataSize
 	}
 
 	return ResponseInfo{readBytes: readBytes}
