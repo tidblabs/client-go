@@ -63,6 +63,7 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	"github.com/tikv/client-go/v2/util"
+	atomicutil "go.uber.org/atomic"
 	zap "go.uber.org/zap"
 )
 
@@ -82,7 +83,7 @@ var (
 
 var (
 	// PrewriteMaxBackoff is max sleep time of the `pre-write` command.
-	PrewriteMaxBackoff = 40000
+	PrewriteMaxBackoff = atomicutil.NewUint64(40000)
 	// CommitMaxBackoff is max sleep time of the 'commit' command
 	CommitMaxBackoff = uint64(40000)
 )
@@ -646,7 +647,11 @@ func (c *twoPhaseCommitter) initKeysAndMutations(ctx context.Context) error {
 		return err
 	}
 
-	commitDetail := &util.CommitDetails{WriteSize: size, WriteKeys: c.mutations.Len()}
+	commitDetail := &util.CommitDetails{
+		WriteSize:   size,
+		WriteKeys:   c.mutations.Len(),
+		ResolveLock: util.ResolveLockDetail{},
+	}
 	metrics.TiKVTxnWriteKVCountHistogram.Observe(float64(commitDetail.WriteKeys))
 	metrics.TiKVTxnWriteSizeHistogram.Observe(float64(commitDetail.WriteSize))
 	c.hasNoNeedCommitKeys = checkCnt > 0
@@ -700,7 +705,7 @@ func txnLockTTL(startTime time.Time, txnSize int) uint64 {
 	// When writeSize is less than 256KB, the base ttl is defaultTTL (3s);
 	// When writeSize is 1MiB, 4MiB, or 10MiB, ttl is 6s, 12s, 20s correspondingly;
 	lockTTL := defaultLockTTL
-	if txnSize >= txnCommitBatchSize {
+	if txnSize >= int(kv.TxnCommitBatchSize.Load()) {
 		sizeMiB := float64(txnSize) / bytesPerMiB
 		lockTTL = uint64(float64(ttlFactor) * math.Sqrt(sizeMiB))
 		if lockTTL < defaultLockTTL {
@@ -874,7 +879,8 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *retry.Backoffer, action
 
 	batchBuilder := newBatched(c.primary())
 	for _, group := range groups {
-		batchBuilder.appendBatchMutationsBySize(group.region, group.mutations, sizeFunc, txnCommitBatchSize)
+		batchBuilder.appendBatchMutationsBySize(group.region, group.mutations, sizeFunc,
+			int(kv.TxnCommitBatchSize.Load()))
 	}
 	firstIsPrimary := batchBuilder.setPrimary()
 
@@ -1348,6 +1354,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		}
 	}()
 
+	commitDetail := c.getDetail()
 	commitTSMayBeCalculated := false
 	// Check async commit is available or not.
 	if c.checkAsyncCommit() {
@@ -1368,7 +1375,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	//     The maxSleep should't be very long in this case.
 	//   - If the region isn't found in PD, it's possible the reason is write-stall.
 	//     The maxSleep can be long in this case.
-	bo := retry.NewBackofferWithVars(ctx, PrewriteMaxBackoff, c.txn.vars)
+	bo := retry.NewBackofferWithVars(ctx, int(PrewriteMaxBackoff.Load()), c.txn.vars)
 
 	// If we want to use async commit or 1PC and also want linearizability across
 	// all nodes, we have to make sure the commit TS of this transaction is greater
@@ -1376,6 +1383,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	// from PD and plus one as our MinCommitTS.
 	if commitTSMayBeCalculated && c.needLinearizability() {
 		util.EvalFailpoint("getMinCommitTSFromTSO")
+		start := time.Now()
 		latestTS, err := c.store.GetTimestampWithRetry(bo, c.txn.GetScope())
 		// If we fail to get a timestamp from PD, we just propagate the failure
 		// instead of falling back to the normal 2PC because a normal 2PC will
@@ -1383,6 +1391,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		if err != nil {
 			return err
 		}
+		commitDetail.GetLatestTsTime = time.Since(start)
 		// Plus 1 to avoid producing the same commit TS with previously committed transactions
 		c.minCommitTS = latestTS + 1
 	}
@@ -1415,7 +1424,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		// RPCs fails. However, if there are multiple errors and some of the errors
 		// are not RPC failures, we can return the actual error instead of undetermined.
 		if undeterminedErr := c.getUndeterminedErr(); undeterminedErr != nil {
-			logutil.Logger(ctx).Error("2PC commit result undetermined",
+			logutil.Logger(ctx).Error("Async commit/1PC result undetermined",
 				zap.Error(err),
 				zap.NamedError("rpcErr", undeterminedErr),
 				zap.Uint64("txnStartTS", c.startTS))
@@ -1423,7 +1432,6 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		}
 	}
 
-	commitDetail := c.getDetail()
 	commitDetail.PrewriteTime = time.Since(start)
 	if bo.GetTotalSleep() > 0 {
 		boSleep := int64(bo.GetTotalSleep()) * int64(time.Millisecond)
@@ -1732,7 +1740,7 @@ func (c *twoPhaseCommitter) tryAmendTxn(ctx context.Context, startInfoSchema Sch
 			return false, err
 		}
 		if c.prewriteStarted {
-			prewriteBo := retry.NewBackofferWithVars(ctx, PrewriteMaxBackoff, c.txn.vars)
+			prewriteBo := retry.NewBackofferWithVars(ctx, int(PrewriteMaxBackoff.Load()), c.txn.vars)
 			err = c.prewriteMutations(prewriteBo, addMutations)
 			if err != nil {
 				logutil.Logger(ctx).Warn("amend prewrite has failed", zap.Error(err), zap.Uint64("txnStartTS", c.startTS))
@@ -1850,10 +1858,6 @@ func (c *twoPhaseCommitter) calculateMaxCommitTS(ctx context.Context) error {
 func (c *twoPhaseCommitter) shouldWriteBinlog() bool {
 	return c.binlog != nil
 }
-
-// TiKV recommends each RPC packet should be less than ~1MB. We keep each packet's
-// Key+Value size below 16KB.
-const txnCommitBatchSize = 16 * 1024
 
 type batchMutations struct {
 	region    locate.RegionVerID

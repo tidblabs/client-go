@@ -99,6 +99,7 @@ func LoadShuttingDown() uint32 {
 // split, so we simply return the error to caller.
 type RegionRequestSender struct {
 	regionCache       *RegionCache
+	apiVersion        kvrpcpb.APIVersion
 	client            client.Client
 	storeAddr         string
 	rpcError          error
@@ -201,6 +202,7 @@ func RecordRegionRequestRuntimeStats(stats map[tikvrpc.CmdType]*RPCRuntimeStats,
 func NewRegionRequestSender(regionCache *RegionCache, client client.Client, opts ...SenderOption) *RegionRequestSender {
 	rrs := &RegionRequestSender{
 		regionCache: regionCache,
+		apiVersion:  regionCache.apiVersion,
 		client:      client,
 	}
 	for _, opt := range opts {
@@ -336,7 +338,16 @@ type accessKnownLeader struct {
 
 func (state *accessKnownLeader) next(bo *retry.Backoffer, selector *replicaSelector) (*RPCContext, error) {
 	leader := selector.replicas[state.leaderIdx]
-	if leader.isExhausted(maxReplicaAttempt) {
+	liveness := leader.store.getLivenessState()
+	if liveness == unreachable && selector.regionCache.enableForwarding {
+		selector.state = &tryNewProxy{leaderIdx: state.leaderIdx}
+		return nil, stateChanged{}
+	}
+	// If hibernate region is enabled and the leader is not reachable, the raft group
+	// will not be wakened up and re-elect the leader until the follower receives
+	// a request. So, before the new leader is elected, we should not send requests
+	// to the unreachable old leader to avoid unnecessary timeout.
+	if liveness != reachable || leader.isExhausted(maxReplicaAttempt) {
 		selector.state = &tryFollower{leaderIdx: state.leaderIdx, lastIdx: state.leaderIdx}
 		return nil, stateChanged{}
 	}
@@ -346,7 +357,8 @@ func (state *accessKnownLeader) next(bo *retry.Backoffer, selector *replicaSelec
 
 func (state *accessKnownLeader) onSendFailure(bo *retry.Backoffer, selector *replicaSelector, cause error) {
 	liveness := selector.checkLiveness(bo, selector.targetReplica())
-	if liveness != reachable && len(selector.replicas) > 1 && selector.regionCache.enableForwarding {
+	// Only enable forwarding when unreachable to avoid using proxy to access a TiKV that cannot serve.
+	if liveness == unreachable && len(selector.replicas) > 1 && selector.regionCache.enableForwarding {
 		selector.state = &accessByKnownProxy{leaderIdx: state.leaderIdx}
 		return
 	}
@@ -421,7 +433,7 @@ type accessByKnownProxy struct {
 
 func (state *accessByKnownProxy) next(bo *retry.Backoffer, selector *replicaSelector) (*RPCContext, error) {
 	leader := selector.replicas[state.leaderIdx]
-	if atomic.LoadInt32(&leader.store.unreachable) == 0 {
+	if leader.store.getLivenessState() == reachable {
 		selector.regionStore.unsetProxyStoreIfNeeded(selector.region)
 		selector.state = &accessKnownLeader{leaderIdx: state.leaderIdx}
 		return nil, stateChanged{}
@@ -456,7 +468,7 @@ type tryNewProxy struct {
 
 func (state *tryNewProxy) next(bo *retry.Backoffer, selector *replicaSelector) (*RPCContext, error) {
 	leader := selector.replicas[state.leaderIdx]
-	if atomic.LoadInt32(&leader.store.unreachable) == 0 {
+	if leader.store.getLivenessState() == reachable {
 		selector.regionStore.unsetProxyStoreIfNeeded(selector.region)
 		selector.state = &accessKnownLeader{leaderIdx: state.leaderIdx}
 		return nil, stateChanged{}
@@ -784,11 +796,8 @@ func (s *replicaSelector) onSendFailure(bo *retry.Backoffer, err error) {
 func (s *replicaSelector) checkLiveness(bo *retry.Backoffer, accessReplica *replica) livenessState {
 	store := accessReplica.store
 	liveness := store.requestLiveness(bo, s.regionCache)
-	// We only check health in loop if forwarding is enabled now.
-	// The restriction might be relaxed if necessary, but the implementation
-	// may be checked carefully again.
-	if liveness != reachable && s.regionCache.enableForwarding {
-		store.startHealthCheckLoopIfNeeded(s.regionCache)
+	if liveness != reachable {
+		store.startHealthCheckLoopIfNeeded(s.regionCache, liveness)
 	}
 	return liveness
 }
@@ -829,6 +838,13 @@ func (s *replicaSelector) updateLeader(leader *metapb.Peer) {
 	}
 	for i, replica := range s.replicas {
 		if isSamePeer(replica.peer, leader) {
+			// If hibernate region is enabled and the leader is not reachable, the raft group
+			// will not be wakened up and re-elect the leader until the follower receives
+			// a request. So, before the new leader is elected, we should not send requests
+			// to the unreachable old leader to avoid unnecessary timeout.
+			if replica.store.getLivenessState() != reachable {
+				return
+			}
 			if replica.isExhausted(maxReplicaAttempt) {
 				// Give the replica one more chance and because each follower is tried only once,
 				// it won't result in infinite retry.
@@ -876,6 +892,17 @@ func (s *RegionRequestSender) getRPCContext(
 		return s.regionCache.GetTiFlashRPCContext(bo, regionID, true)
 	case tikvrpc.TiDB:
 		return &RPCContext{Addr: s.storeAddr}, nil
+	case tikvrpc.TiFlashMPP:
+		rpcCtxs, err := s.regionCache.GetTiFlashMPPRPCContextByConsistentHash(bo, []RegionVerID{regionID})
+		if err != nil {
+			return nil, err
+		}
+		if rpcCtxs == nil {
+			return nil, nil
+		} else if len(rpcCtxs) != 1 {
+			return nil, errors.New(fmt.Sprintf("unexpected number of rpcCtx, expect 1, got: %v", len(rpcCtxs)))
+		}
+		return rpcCtxs[0], nil
 	default:
 		return nil, errors.Errorf("unsupported storage type: %v", et)
 	}
@@ -992,6 +1019,14 @@ func (s *RegionRequestSender) SendReqCtx(
 
 		logutil.Eventf(bo.GetCtx(), "send %s request to region %d at %s", req.Type, regionID.id, rpcCtx.Addr)
 		s.storeAddr = rpcCtx.Addr
+
+		if _, err := util.EvalFailpoint("beforeSendReqToRegion"); err == nil {
+			if hook := bo.GetCtx().Value("sendReqToRegionHook"); hook != nil {
+				h := hook.(func(*tikvrpc.Request))
+				h(req)
+			}
+		}
+
 		var retry bool
 		resp, retry, err = s.sendReqToRegion(bo, rpcCtx, req, timeout)
 		if err != nil {
@@ -1083,7 +1118,26 @@ func (h *RPCCanceller) CancelAll() {
 	h.Unlock()
 }
 
+func fetchRespInfo(resp *tikvrpc.Response) string {
+	var extraInfo string
+	if resp == nil || resp.Resp == nil {
+		extraInfo = "nil response"
+	} else {
+		regionErr, e := resp.GetRegionError()
+		if e != nil {
+			extraInfo = e.Error()
+		} else if regionErr != nil {
+			extraInfo = regionErr.String()
+		} else if prewriteResp, ok := resp.Resp.(*kvrpcpb.PrewriteResponse); ok {
+			extraInfo = prewriteResp.String()
+		}
+	}
+	return extraInfo
+}
+
 func (s *RegionRequestSender) sendReqToRegion(bo *retry.Backoffer, rpcCtx *RPCContext, req *tikvrpc.Request, timeout time.Duration) (resp *tikvrpc.Response, retry bool, err error) {
+	req.ApiVersion = s.apiVersion
+
 	if e := tikvrpc.SetContext(req, rpcCtx.Meta, rpcCtx.Peer); e != nil {
 		return nil, false, err
 	}
@@ -1144,7 +1198,7 @@ func (s *RegionRequestSender) sendReqToRegion(bo *retry.Backoffer, rpcCtx *RPCCo
 		resp, err = s.client.SendRequest(ctx, sendToAddr, req, timeout)
 		if s.Stats != nil {
 			RecordRegionRequestRuntimeStats(s.Stats, req.Type, time.Since(start))
-			if val, err := util.EvalFailpoint("tikvStoreRespResult"); err == nil {
+			if val, fpErr := util.EvalFailpoint("tikvStoreRespResult"); fpErr == nil {
 				if val.(bool) {
 					if req.Type == tikvrpc.CmdCop && bo.GetTotalSleep() == 0 {
 						return &tikvrpc.Response{
@@ -1170,7 +1224,8 @@ func (s *RegionRequestSender) sendReqToRegion(bo *retry.Backoffer, rpcCtx *RPCCo
 
 			if inject {
 				logutil.Logger(ctx).Info("[failpoint] injected RPC error on recv", zap.Stringer("type", req.Type),
-					zap.Stringer("req", req.Req.(fmt.Stringer)), zap.Stringer("ctx", &req.Context))
+					zap.Stringer("req", req.Req.(fmt.Stringer)), zap.Stringer("ctx", &req.Context),
+					zap.Error(err), zap.String("extra response info", fetchRespInfo(resp)))
 				err = errors.New("injected RPC error on recv")
 				resp = nil
 			}
@@ -1267,7 +1322,9 @@ func (s *RegionRequestSender) onSendFail(bo *retry.Backoffer, ctx *RPCContext, e
 		}
 	}
 
-	if ctx.Meta != nil {
+	if ctx.Store != nil && ctx.Store.storeType == tikvrpc.TiFlashMPP {
+		s.regionCache.InvalidateTiFlashMPPStoresIfGRPCError(err)
+	} else if ctx.Meta != nil {
 		if s.replicaSelector != nil {
 			s.replicaSelector.onSendFailure(bo, err)
 		} else {
@@ -1279,7 +1336,7 @@ func (s *RegionRequestSender) onSendFail(bo *retry.Backoffer, ctx *RPCContext, e
 	// When a store is not available, the leader of related region should be elected quickly.
 	// TODO: the number of retry time should be limited:since region may be unavailable
 	// when some unrecoverable disaster happened.
-	if ctx.Store != nil && ctx.Store.storeType == tikvrpc.TiFlash {
+	if ctx.Store != nil && ctx.Store.storeType.IsTiFlashRelatedType() {
 		err = bo.Backoff(retry.BoTiFlashRPC, errors.Errorf("send tiflash request error: %v, ctx: %v, try next peer later", err, ctx))
 	} else {
 		err = bo.Backoff(retry.BoTiKVRPC, errors.Errorf("send tikv request error: %v, ctx: %v, try next peer later", err, ctx))
@@ -1344,6 +1401,8 @@ func regionErrorToLabel(e *errorpb.Error) string {
 		return "region_not_initialized"
 	} else if e.GetDiskFull() != nil {
 		return "disk_full"
+	} else if e.GetRecoveryInProgress() != nil {
+		return "recovery_in_progress"
 	}
 	return "unknown"
 }
@@ -1386,10 +1445,19 @@ func (s *RegionRequestSender) onRegionError(bo *retry.Backoffer, ctx *RPCContext
 	// Retry it when tikv disk full happens.
 	if diskFull := regionErr.GetDiskFull(); diskFull != nil {
 		if err = bo.Backoff(retry.BoTiKVDiskFull, errors.Errorf("tikv disk full: %v ctx: %v", diskFull.String(), ctx.String())); err != nil {
-			retry.BoTiKVDiskFull.SetErrors(errors.Errorf("tikv disk full: %v", diskFull.String()))
 			return false, nil
 		}
 		return true, nil
+	}
+
+	if regionErr.GetRecoveryInProgress() != nil {
+		s.regionCache.InvalidateCachedRegion(ctx.Region)
+		logutil.BgLogger().Debug("tikv reports `RecoveryInProgress`", zap.Stringer("ctx", ctx))
+		err = bo.Backoff(retry.BoRegionRecoveryInProgress, errors.Errorf("region recovery in progress, ctx: %v", ctx))
+		if err != nil {
+			return false, err
+		}
+		return false, nil
 	}
 
 	// This peer is removed from the region. Invalidate the region since it's too stale.
@@ -1399,7 +1467,7 @@ func (s *RegionRequestSender) onRegionError(bo *retry.Backoffer, ctx *RPCContext
 	}
 
 	if regionErr.GetKeyNotInRegion() != nil {
-		logutil.BgLogger().Debug("tikv reports `KeyNotInRegion`", zap.Stringer("ctx", ctx))
+		logutil.BgLogger().Debug("tikv reports `KeyNotInRegion`", zap.Stringer("req", req), zap.Stringer("ctx", ctx))
 		s.regionCache.InvalidateCachedRegion(ctx.Region)
 		return false, nil
 	}
@@ -1419,7 +1487,7 @@ func (s *RegionRequestSender) onRegionError(bo *retry.Backoffer, ctx *RPCContext
 		logutil.BgLogger().Warn("tikv reports `ServerIsBusy` retry later",
 			zap.String("reason", regionErr.GetServerIsBusy().GetReason()),
 			zap.Stringer("ctx", ctx))
-		if ctx != nil && ctx.Store != nil && ctx.Store.storeType == tikvrpc.TiFlash {
+		if ctx != nil && ctx.Store != nil && ctx.Store.storeType.IsTiFlashRelatedType() {
 			err = bo.Backoff(retry.BoTiFlashServerBusy, errors.Errorf("server is busy, ctx: %v", ctx))
 		} else {
 			err = bo.Backoff(retry.BoTiKVServerBusy, errors.Errorf("server is busy, ctx: %v", ctx))
@@ -1454,6 +1522,9 @@ func (s *RegionRequestSender) onRegionError(bo *retry.Backoffer, ctx *RPCContext
 			zap.Stringer("ctx", ctx))
 		ctx.Store.markNeedCheck(s.regionCache.notifyCheckCh)
 		s.regionCache.InvalidateCachedRegion(ctx.Region)
+		// It's possible the address of store is not changed but the DNS resolves to a different address in k8s environment,
+		// so we always reconnect in this case.
+		s.client.CloseAddr(ctx.Addr)
 		return false, nil
 	}
 

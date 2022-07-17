@@ -82,9 +82,11 @@ type testCommitterSuite struct {
 func (s *testCommitterSuite) SetupSuite() {
 	atomic.StoreUint64(&transaction.ManagedLockTTL, 3000) // 3s
 	atomic.StoreUint64(&transaction.CommitMaxBackoff, 1000)
+	s.Nil(failpoint.Enable("tikvclient/injectLiveness", `return("reachable")`))
 }
 
 func (s *testCommitterSuite) TearDownSuite() {
+	s.Nil(failpoint.Disable("tikvclient/injectLiveness"))
 	atomic.StoreUint64(&transaction.CommitMaxBackoff, 20000)
 }
 
@@ -98,7 +100,6 @@ func (s *testCommitterSuite) SetupTest() {
 	store, err := tikv.NewKVStore("mocktikv-store", pdCli, spkv, client)
 	store.EnableTxnLocalLatches(8096)
 	s.Require().Nil(err)
-
 	s.store = tikv.StoreProbe{KVStore: store}
 }
 
@@ -1309,7 +1310,7 @@ func (s *testCommitterSuite) TestPrewriteSecondaryKeys() {
 	committer, err := txn.NewCommitter(1)
 	s.Nil(err)
 
-	mock := mockClient{inner: s.store.GetTiKVClient()}
+	mock := mockClient{Client: s.store.GetTiKVClient()}
 	s.store.SetTiKVClient(&mock)
 	ctx := context.Background()
 	// TODO remove this when minCommitTS is returned from mockStore prewrite response.
@@ -1442,7 +1443,7 @@ func (s *testCommitterSuite) TestAsyncCommitCheck() {
 }
 
 type mockClient struct {
-	inner            tikv.Client
+	tikv.Client
 	seenPrimaryReq   uint32
 	seenSecondaryReq uint32
 }
@@ -1464,11 +1465,7 @@ func (m *mockClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.
 			}
 		}
 	}
-	return m.inner.SendRequest(ctx, addr, req, timeout)
-}
-
-func (m *mockClient) Close() error {
-	return m.inner.Close()
+	return m.Client.SendRequest(ctx, addr, req, timeout)
 }
 
 func isPrimary(req *kvrpcpb.PrewriteRequest) bool {
