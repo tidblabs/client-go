@@ -217,9 +217,7 @@ func (r *Reservation) CancelAt(now time.Time) {
 	now, _, tokens := r.lim.advance(now)
 	// calculate new number of tokens
 	tokens += restoreTokens
-	// if burst := float64(r.lim.burst); tokens > burst {
-	// 	tokens = burst
-	// }
+
 	// update state
 	r.lim.last = now
 	r.lim.tokens = tokens
@@ -516,12 +514,7 @@ func (lim *Limiter) advance(now time.Time) (newNow time.Time, newLast time.Time,
 	// Calculate the new number of tokens, due to time that passed.
 	elapsed := now.Sub(last)
 	delta := lim.limit.tokensFromDuration(elapsed)
-	//log.Info("advance", zap.Float64("tokens", lim.tokens), zap.Float64("delta", delta), zap.Duration("elapsed", elapsed))
 	tokens := lim.tokens + delta
-	// if burst := float64(lim.burst); tokens > burst {
-	// 	tokens = burst
-	// }
-	//log.Warn("advance", zap.Float64("delta", delta), zap.Float64("tokens", tokens), zap.Float64("limit tokens", float64(lim.tokens)))
 	return now, last, tokens
 }
 

@@ -56,17 +56,9 @@ func (r interceptedClient) SendRequest(ctx context.Context, addr string, req *ti
 				if err != nil {
 					return nil, err
 				}
-				// stack := debug.Stack()
-				// skipLog := strings.Contains(string(stack), "ddl") || strings.Contains(string(stack), "updateSafeTS") || strings.Contains(string(stack), "statistics/handle/update") || strings.Contains(string(stack), "loadSchemaInLoop")
-				// if !skipLog {
-				// 	log.L().Sugar().Infof("[%s] before interceptor, type: %s, req: %+v, req_cost: %+v\n %s", target, req.Type.String(), req, reqInfo, debug.Stack())
-				// }
 				resp, err := next(target, req)
 				if resp != nil {
 					respInfo := tenantcost.MakeResponseInfo(resp)
-					// if !skipLog {
-					// 	log.L().Sugar().Infof("[%s] after interceptor, resp: %+v, resp_string: %s, resp_cost: %+v", target, resp, FromResponse(resp), respInfo)
-					// }
 					TenantKVControllor.OnResponse(context.Background(), reqInfo, respInfo)
 				}
 				return resp, err
