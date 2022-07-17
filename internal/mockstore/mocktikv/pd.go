@@ -263,7 +263,15 @@ func (c *pdClient) ScatterRegions(ctx context.Context, regionsID []uint64, opts 
 	return nil, nil
 }
 
+func (c *pdClient) Split(ctx context.Context, regionsID []uint64, opts ...pd.RegionsOption) (*pdpb.ScatterRegionResponse, error) {
+	return nil, nil
+}
+
 func (c *pdClient) SplitRegions(ctx context.Context, splitKeys [][]byte, opts ...pd.RegionsOption) (*pdpb.SplitRegionsResponse, error) {
+	return nil, nil
+}
+
+func (c *pdClient) SplitAndScatterRegions(ctx context.Context, splitKeys [][]byte, opts ...pd.RegionsOption) (*pdpb.SplitAndScatterRegionsResponse, error) {
 	return nil, nil
 }
 
