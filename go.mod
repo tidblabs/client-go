@@ -19,13 +19,14 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20211224045212-9687c2b0f87c
 	github.com/pingcap/failpoint v0.0.0-20210918120811-547c13e3eb00
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
-	github.com/pingcap/kvproto v0.0.0-20220406064517-f7a7c8ccda74
+	github.com/pingcap/kvproto v0.0.0-20220705053936-aa9c2d20cd2a
 	github.com/pingcap/log v0.0.0-20211215031037-e024ba4eb0ee
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.11.0
 	github.com/prometheus/client_model v0.2.0
 	github.com/remyoudompheng/bigfft v0.0.0-20200410134404-eec4a21b6bb0 // indirect
 	github.com/rogpeppe/go-internal v1.8.1 // indirect
+	github.com/stathat/consistent v1.0.0
 	github.com/stretchr/testify v1.7.0
 	github.com/tikv/pd/client v0.0.0-20220307081149-841fa61e9710
 	github.com/twmb/murmur3 v1.1.3
@@ -38,11 +39,11 @@ require (
 	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c
 	golang.org/x/sys v0.0.0-20220209214540-3681064d5158 // indirect
 	golang.org/x/text v0.3.7 // indirect
-	google.golang.org/appengine v1.4.0
 	google.golang.org/genproto v0.0.0-20210624195500-8bfb893ecb84 // indirect
 	google.golang.org/grpc v1.43.0
+	stathat.com/c/consistent v1.0.0 // indirect
 )
 
-replace github.com/pingcap/kvproto => github.com/tidblabs/kvproto v0.0.0-20220407200414-24874abbd469
+replace github.com/pingcap/kvproto => github.com/tidblabs/kvproto v0.0.0-20220717102655-11ecae55cf55
 
 replace github.com/tikv/pd/client => github.com/tidblabs/pd/client v0.0.0-20220412182747-eb76255e4ea5
