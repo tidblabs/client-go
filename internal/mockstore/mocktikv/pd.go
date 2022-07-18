@@ -259,3 +259,7 @@ func (c *pdClient) CreateTenantID(ctx context.Context, name string) (uint16, err
 func (c *pdClient) DeleteTenantID(ctx context.Context, name string, id uint16) error {
 	return nil
 }
+
+func (c *pdClient) SplitAndScatterRegions(ctx context.Context, splitKeys [][]byte, opts ...pd.RegionsOption) (*pdpb.SplitAndScatterRegionsResponse, error) {
+	return nil, nil
+}
