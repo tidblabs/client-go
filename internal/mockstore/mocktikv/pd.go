@@ -251,3 +251,11 @@ func (c *pdClient) UpdateOption(option pd.DynamicOption, value interface{}) erro
 func (c *pdClient) TokenBucket(ctx context.Context, req *pdpb.TokenBucketRequest) (*pdpb.TokenBucketResponse, error) {
 	return nil, nil
 }
+
+func (c *pdClient) CreateTenantID(ctx context.Context, name string) (uint16, error) {
+	return 1, nil
+}
+
+func (c *pdClient) DeleteTenantID(ctx context.Context, name string, id uint16) error {
+	return nil
+}
