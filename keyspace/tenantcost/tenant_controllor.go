@@ -194,7 +194,7 @@ func (c *tenantSideCostController) updateRunState(ctx context.Context) {
 	c.run.cpuUsage = newCPUUsage
 
 	c.limiter.RemoveTokens(newTime, float64(RequestUnit(ru)))
-	log.Info("[tenant controllor] update run state, use cpu second", zap.Float64("deltaCPU", deltaCPU), zap.Float64("ru", ru), zap.Float64("newCPUUsage", newCPUUsage), zap.Float64("oldCPUUsage", c.run.cpuUsage), zap.Float64("remaining", c.limiter.AvailableTokens(newTime)), zap.Float64("limit", float64(c.limiter.Limit())))
+	log.Debug("[tenant controllor] update run state, use cpu second", zap.Float64("deltaCPU", deltaCPU), zap.Float64("ru", ru), zap.Float64("newCPUUsage", newCPUUsage), zap.Float64("oldCPUUsage", c.run.cpuUsage), zap.Float64("remaining", c.limiter.AvailableTokens(newTime)), zap.Float64("limit", float64(c.limiter.Limit())))
 }
 
 // updateAvgRUPerSec is called exactly once per mainLoopUpdateInterval.
@@ -202,7 +202,7 @@ func (c *tenantSideCostController) updateAvgRUPerSec() {
 	delta := c.run.consumption.RU - c.run.avgRUPerSecLastRU
 	c.run.avgRUPerSec = movingAvgFactor*c.run.avgRUPerSec + (1-movingAvgFactor)*delta
 	c.run.avgRUPerSecLastRU = c.run.consumption.RU
-	log.Info("[tenant controllor] update avg ru per sec", zap.Float64("avgRUPerSec", c.run.avgRUPerSec), zap.Float64("avgRUPerSecLastRU", c.run.avgRUPerSecLastRU), zap.Any("consumption", c.run.consumption))
+	log.Debug("[tenant controllor] update avg ru per sec", zap.Float64("avgRUPerSec", c.run.avgRUPerSec), zap.Float64("avgRUPerSecLastRU", c.run.avgRUPerSecLastRU), zap.Any("consumption", c.run.consumption))
 }
 
 // shouldReportConsumption decides if it's time to send a token bucket request
@@ -251,7 +251,7 @@ func (c *tenantSideCostController) sendTokenBucketRequest(ctx context.Context, s
 		TargetRequestPeriodSeconds:  uint64(c.run.targetPeriod.Seconds()),
 	}
 	now := time.Now()
-	log.Info("[tenant controllor] send token bucket request", zap.Time("now", now), zap.Any("req", req), zap.String("source", source))
+	log.Debug("[tenant controllor] send token bucket request", zap.Time("now", now), zap.Any("req", req), zap.String("source", source))
 
 	c.run.lastRequestTime = c.run.now
 	c.run.lastReportedConsumption = c.run.consumption
@@ -270,7 +270,7 @@ func (c *tenantSideCostController) sendTokenBucketRequest(ctx context.Context, s
 			log.L().Sugar().Infof("TokenBucket error: %v", resp.Header.Error)
 			resp = nil
 		}
-		log.Info("[tenant controllor] token bucket response", zap.Time("now", time.Now()), zap.Any("resp", resp), zap.String("source", source), zap.Duration("latency", time.Now().Sub(now)))
+		log.Debug("[tenant controllor] token bucket response", zap.Time("now", time.Now()), zap.Any("resp", resp), zap.String("source", source), zap.Duration("latency", time.Now().Sub(now)))
 		c.responseChan <- resp
 	}()
 }
@@ -340,7 +340,7 @@ func (c *tenantSideCostController) handleTokenBucketResponse(
 	}
 	c.run.lastRate = cfg.NewRate
 	c.limiter.Reconfigure(c.run.now, cfg)
-	log.Info("[tenant controllor] update local token bucket", zap.Float64("granted", granted), zap.Float64("rate", cfg.NewRate), zap.Float64("tokens", cfg.NewTokens), zap.Float64("notifyThreshold", cfg.NotifyThreshold))
+	log.Debug("[tenant controllor] update local token bucket", zap.Float64("granted", granted), zap.Float64("rate", cfg.NewRate), zap.Float64("tokens", cfg.NewTokens), zap.Float64("notifyThreshold", cfg.NotifyThreshold))
 
 }
 
@@ -360,7 +360,7 @@ func (c *tenantSideCostController) mainLoop(ctx context.Context) {
 			c.updateAvgRUPerSec()
 			// Switch to the fallback rate, if necessary.
 			if !c.run.fallbackRateStart.IsZero() && !c.run.now.Before(c.run.fallbackRateStart) {
-				log.Info("[tenant controllor] switching to fallback rate", zap.Float64("rate", c.run.fallbackRate))
+				log.Debug("[tenant controllor] switching to fallback rate", zap.Float64("rate", c.run.fallbackRate))
 				c.limiter.SetLimitAt(c.run.now, Limit(c.run.fallbackRate))
 				c.run.fallbackRateStart = time.Time{}
 			}
