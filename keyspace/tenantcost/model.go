@@ -12,11 +12,12 @@ import (
 type RequestUnit float64
 
 const (
-	readRequestCost  = 1
-	readCostPerMB    = 0.5
-	writeRequestCost = 5
-	writeCostPerMB   = 200
-	podCPUSecondCost = 1000
+	readRequestCost      = 1
+	readCostPerMB        = 0.5
+	writeRequestCost     = 5
+	writeCostPerMB       = 200
+	kvCPUMillisecondCost = 1
+	podCPUSecondCost     = 1000
 )
 
 type Config struct {
@@ -32,6 +33,9 @@ type Config struct {
 	// KVWriteByte is the per-byte cost of a KV write.
 	KVWriteByte RequestUnit
 
+	// KVCPUMillisecond is the per-millisecond cost of a KV request.
+	KVCPUMillisecond RequestUnit
+
 	// PodCPUSecond is the cost of using a CPU second on the SQL pod.
 	PodCPUSecond RequestUnit
 }
@@ -42,11 +46,12 @@ const perMBToPerByte = float64(1) / (1024 * 1024)
 // setting values.
 func DefaultConfig() Config {
 	return Config{
-		KVReadRequest:  RequestUnit(readRequestCost),
-		KVReadByte:     RequestUnit(readCostPerMB * perMBToPerByte),
-		KVWriteRequest: RequestUnit(writeRequestCost),
-		KVWriteByte:    RequestUnit(writeCostPerMB * perMBToPerByte),
-		PodCPUSecond:   RequestUnit(podCPUSecondCost),
+		KVReadRequest:    RequestUnit(readRequestCost),
+		KVReadByte:       RequestUnit(readCostPerMB * perMBToPerByte),
+		KVWriteRequest:   RequestUnit(writeRequestCost),
+		KVWriteByte:      RequestUnit(writeCostPerMB * perMBToPerByte),
+		KVCPUMillisecond: RequestUnit(kvCPUMillisecondCost),
+		PodCPUSecond:     RequestUnit(podCPUSecondCost),
 	}
 }
 
@@ -70,9 +75,9 @@ func (c *Config) RequestCost(bri RequestInfo) RequestUnit {
 }
 
 // ResponseCost returns the portion of the cost that can only be calculated
-// after-the-fact: the per-byte read cost.
+// after-the-fact: the per-byte read and per-millisecond kv CPU time cost.
 func (c *Config) ResponseCost(bri ResponseInfo) RequestUnit {
-	return RequestUnit(bri.ReadBytes()) * c.KVReadByte
+	return RequestUnit(bri.ReadBytes())*c.KVReadByte + RequestUnit(bri.CPUTime())*c.KVCPUMillisecond
 }
 
 // RequestInfo captures the request information that is used (together with
@@ -122,19 +127,21 @@ func TestingRequestInfo(isWrite bool, writeBytes int64) RequestInfo {
 // calculated after-the-fact. Specifically: the read size (if the request is a
 // read).
 type ResponseInfo struct {
+	cpuTime   int64
 	readBytes int64
 }
 
 // MakeResponseInfo extracts the relevant information from a BatchResponse.
 func MakeResponseInfo(resp *tikvrpc.Response) ResponseInfo {
 	var (
+		cpuTime      int64
 		readBytes    int64
 		detailV2     *kvrpcpb.ExecDetailsV2
 		detail       *kvrpcpb.ExecDetails
 		respDataSize int64
 	)
 	if resp.Resp == nil {
-		return ResponseInfo{readBytes}
+		return ResponseInfo{cpuTime, readBytes}
 	}
 	switch r := resp.Resp.(type) {
 	case *coprocessor.Response:
@@ -155,13 +162,20 @@ func MakeResponseInfo(resp *tikvrpc.Response) ResponseInfo {
 	}
 
 	if detailV2 != nil && detailV2.ScanDetailV2 != nil {
+		cpuTime = detailV2.TimeDetail.ProcessWallTimeMs
 		readBytes = int64(detailV2.ScanDetailV2.GetProcessedVersionsSize())
 	} else if detail != nil && detail.ScanDetail != nil {
+		cpuTime = detail.TimeDetail.ProcessWallTimeMs
 		// readBytes = detail.ScanDetail.Lock.ReadBytes + detail.ScanDetail.Write.ReadBytes + detail.ScanDetail.Write.ReadBytes
 		readBytes = respDataSize
 	}
 
-	return ResponseInfo{readBytes: readBytes}
+	return ResponseInfo{cpuTime, readBytes}
+}
+
+// CPUTime returns the CPU time in milliseconds.
+func (bri ResponseInfo) CPUTime() int64 {
+	return bri.cpuTime
 }
 
 // ReadBytes returns the bytes read, or 0 if the request was a write.

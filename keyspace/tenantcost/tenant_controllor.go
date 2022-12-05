@@ -19,7 +19,8 @@ const mainLoopUpdateInterval = 1 * time.Second
 // sample per mainLoopUpdateInterval).
 //
 // If we want a factor of 0.5 per second, this should be:
-//   0.5^(1 second / mainLoopUpdateInterval)
+//
+//	0.5^(1 second / mainLoopUpdateInterval)
 const movingAvgFactor = 0.5
 
 const notifyFraction = 0.1
@@ -270,7 +271,7 @@ func (c *tenantSideCostController) sendTokenBucketRequest(ctx context.Context, s
 			log.L().Sugar().Infof("TokenBucket error: %v", resp.Header.Error)
 			resp = nil
 		}
-		log.Info("[tenant controllor] token bucket response", zap.Time("now", time.Now()), zap.Any("resp", resp), zap.String("source", source), zap.Duration("latency", time.Now().Sub(now)))
+		log.Info("[tenant controllor] token bucket response", zap.Time("now", time.Now()), zap.Any("resp", resp), zap.String("source", source), zap.Duration("latency", time.Since(now)))
 		c.responseChan <- resp
 	}()
 }
@@ -413,7 +414,7 @@ func (c *tenantSideCostController) OnResponse(
 	ctx context.Context, req RequestInfo, resp ResponseInfo,
 ) {
 
-	if resp.ReadBytes() > 0 {
+	if resp.CPUTime() > 0 || resp.ReadBytes() > 0 {
 		c.limiter.RemoveTokens(time.Now(), float64(c.costCfg.ResponseCost(resp)))
 	}
 
