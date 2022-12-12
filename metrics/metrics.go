@@ -96,6 +96,11 @@ var (
 	TiKVReadThroughput                       prometheus.Histogram
 	TiKVUnsafeDestroyRangeFailuresCounterVec *prometheus.CounterVec
 	TiKVPrewriteAssertionUsageCounter        *prometheus.CounterVec
+
+	// Multi-tenant
+	TiKVReadRequestUnit   *prometheus.HistogramVec
+	TiKVWriteRequestUnit  *prometheus.HistogramVec
+	TiKVCommonRequestUnit *prometheus.HistogramVec
 )
 
 // Label constants.
@@ -119,6 +124,34 @@ const (
 )
 
 func initMetrics(namespace, subsystem string) {
+	// Multi-tenant
+	TiKVReadRequestUnit = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: namespace,
+			Subsystem: subsystem,
+			Name:      "tikv_read_request_unit",
+			Help:      "Bucketed histogram of all types of TiKV's read request unit cost.",
+			Buckets:   prometheus.ExponentialBuckets(1, 10, 5), // 1 ~ 100000
+		}, []string{LblType})
+
+	TiKVWriteRequestUnit = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: namespace,
+			Subsystem: subsystem,
+			Name:      "tikv_write_request_unit",
+			Help:      "Bucketed histogram of all types of TiKV's write request unit cost.",
+			Buckets:   prometheus.ExponentialBuckets(1, 10, 5), // 1 ~ 100000
+		}, []string{LblType})
+
+	TiKVCommonRequestUnit = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: namespace,
+			Subsystem: subsystem,
+			Name:      "tikv_resp_request_unit",
+			Help:      "Bucketed histogram of all types of TiKV's response request unit cost.",
+			Buckets:   prometheus.ExponentialBuckets(1, 10, 5), // 1 ~ 100000
+		}, []string{LblType})
+
 	TiKVTxnCmdHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: namespace,
@@ -659,6 +692,10 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TiKVReadThroughput)
 	prometheus.MustRegister(TiKVUnsafeDestroyRangeFailuresCounterVec)
 	prometheus.MustRegister(TiKVPrewriteAssertionUsageCounter)
+	// Multi-tenant
+	prometheus.MustRegister(TiKVReadRequestUnit)
+	prometheus.MustRegister(TiKVWriteRequestUnit)
+	prometheus.MustRegister(TiKVCommonRequestUnit)
 }
 
 // readCounter reads the value of a prometheus.Counter.

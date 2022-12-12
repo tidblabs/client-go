@@ -21,23 +21,26 @@ const (
 )
 
 type Config struct {
+	// DryRunMode is a mode that the cost will not be actually consumed.
+	DryRunMode bool `toml:"dry-run-mode" json:"dry-run-mode"`
+
 	// KVReadRequest is the baseline cost of a KV read.
-	KVReadRequest RequestUnit
+	KVReadRequest RequestUnit `toml:"kv-read-request" json:"kv-read-request"`
 
 	// KVReadByte is the per-byte cost of a KV read.
-	KVReadByte RequestUnit
+	KVReadByte RequestUnit `toml:"kv-read-byte" json:"kv-read-byte"`
 
 	// KVWriteRequest is the baseline cost of a KV write.
-	KVWriteRequest RequestUnit
+	KVWriteRequest RequestUnit `toml:"kv-write-request" json:"kv-write-request"`
 
 	// KVWriteByte is the per-byte cost of a KV write.
-	KVWriteByte RequestUnit
+	KVWriteByte RequestUnit `toml:"kv-write-byte" json:"kv-write-byte"`
 
 	// KVCPUMillisecond is the per-millisecond cost of a KV request.
-	KVCPUMillisecond RequestUnit
+	KVCPUMillisecond RequestUnit `toml:"kv-cpu-millisecond" json:"kv-cpu-millisecond"`
 
 	// PodCPUSecond is the cost of using a CPU second on the SQL pod.
-	PodCPUSecond RequestUnit
+	PodCPUSecond RequestUnit `toml:"pod-cpu-second" json:"pod-cpu-second"`
 }
 
 const perMBToPerByte = float64(1) / (1024 * 1024)
@@ -65,6 +68,10 @@ func (c *Config) KVWriteCost(bytes int64) RequestUnit {
 	return c.KVWriteRequest + RequestUnit(bytes)*c.KVWriteByte
 }
 
+func (c *Config) KVCPUCost(milliseconds int64) RequestUnit {
+	return c.KVCPUMillisecond * RequestUnit(milliseconds)
+}
+
 // RequestCost returns the portion of the cost that can be calculated upfront:
 // the per-request cost (for both reads and writes) and the per-byte write cost.
 func (c *Config) RequestCost(bri RequestInfo) RequestUnit {
@@ -77,7 +84,7 @@ func (c *Config) RequestCost(bri RequestInfo) RequestUnit {
 // ResponseCost returns the portion of the cost that can only be calculated
 // after-the-fact: the per-byte read and per-millisecond kv CPU time cost.
 func (c *Config) ResponseCost(bri ResponseInfo) RequestUnit {
-	return RequestUnit(bri.ReadBytes())*c.KVReadByte + RequestUnit(bri.CPUTime())*c.KVCPUMillisecond
+	return c.KVReadCost(bri.ReadBytes()) + c.KVCPUCost(bri.CPUTime())
 }
 
 // RequestInfo captures the request information that is used (together with
@@ -196,6 +203,8 @@ func Add(self *pdpb.Consumption, other *pdpb.Consumption) {
 	self.WriteRequests += other.WriteRequests
 	self.WriteBytes += other.WriteBytes
 	self.PodsCpuSeconds += other.PodsCpuSeconds
+	self.KvReadCpuMilliseconds += other.KvReadCpuMilliseconds
+	self.KvWriteCpuMilliseconds += other.KvWriteCpuMilliseconds
 }
 
 // Sub subtracts consumption, making sure no fields become negative.
@@ -234,5 +243,17 @@ func Sub(c *pdpb.Consumption, other *pdpb.Consumption) {
 		c.PodsCpuSeconds = 0
 	} else {
 		c.PodsCpuSeconds -= other.PodsCpuSeconds
+	}
+
+	if c.KvReadCpuMilliseconds < other.KvReadCpuMilliseconds {
+		c.KvReadCpuMilliseconds = 0
+	} else {
+		c.KvReadCpuMilliseconds -= other.KvReadCpuMilliseconds
+	}
+
+	if c.KvWriteCpuMilliseconds < other.KvWriteCpuMilliseconds {
+		c.KvWriteCpuMilliseconds = 0
+	} else {
+		c.KvWriteCpuMilliseconds -= other.KvWriteCpuMilliseconds
 	}
 }

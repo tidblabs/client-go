@@ -135,9 +135,22 @@ var (
 	PrewriteAssertionUsageCounterExist    prometheus.Counter
 	PrewriteAssertionUsageCounterNotExist prometheus.Counter
 	PrewriteAssertionUsageCounterUnknown  prometheus.Counter
+
+	// Multi-tenant
+	ReadByteRU   prometheus.Observer
+	ReadKVCPURU  prometheus.Observer
+	WriteByteRU  prometheus.Observer
+	WriteKVCPURU prometheus.Observer
+	PodCPURU     prometheus.Observer
 )
 
 func initShortcuts() {
+	ReadByteRU = TiKVReadRequestUnit.WithLabelValues("byte")
+	ReadKVCPURU = TiKVReadRequestUnit.WithLabelValues("kv_cpu")
+	WriteByteRU = TiKVWriteRequestUnit.WithLabelValues("byte")
+	WriteKVCPURU = TiKVWriteRequestUnit.WithLabelValues("kv_cpu")
+	PodCPURU = TiKVCommonRequestUnit.WithLabelValues("pod_cpu")
+
 	TxnCmdHistogramWithCommit = TiKVTxnCmdHistogram.WithLabelValues(LblCommit)
 	TxnCmdHistogramWithRollback = TiKVTxnCmdHistogram.WithLabelValues(LblRollback)
 	TxnCmdHistogramWithBatchGet = TiKVTxnCmdHistogram.WithLabelValues(LblBatchGet)

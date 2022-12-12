@@ -8,6 +8,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/log"
+	"github.com/tikv/client-go/v2/metrics"
 	"go.uber.org/zap"
 )
 
@@ -46,6 +47,7 @@ const initialRate = 100
 func newTenantSideCostController(
 	tenantID uint64,
 	provider TokenBucketProvider,
+	config *Config,
 ) (*tenantSideCostController, error) {
 	c := &tenantSideCostController{
 		tenantID:        tenantID,
@@ -55,16 +57,20 @@ func newTenantSideCostController(
 	}
 	c.limiter = NewLimiter(initialRate, initialRquestUnits, c.lowRUNotifyChan)
 
-	c.costCfg = DefaultConfig()
+	if config != nil {
+		c.costCfg = *config
+	} else {
+		c.costCfg = DefaultConfig()
+	}
 	return c, nil
 }
 
 // NewTenantSideCostController creates an object which implements the
 // server.TenantSideCostController interface.
 func NewTenantSideCostController(
-	tenantID uint64, provider TokenBucketProvider,
+	tenantID uint64, provider TokenBucketProvider, config *Config,
 ) (*tenantSideCostController, error) {
-	return newTenantSideCostController(tenantID, provider)
+	return newTenantSideCostController(tenantID, provider, config)
 }
 
 type tenantSideCostController struct {
@@ -183,6 +189,8 @@ func (c *tenantSideCostController) updateRunState(ctx context.Context) {
 	}
 	ru := deltaCPU * float64(c.costCfg.PodCPUSecond)
 
+	metrics.PodCPURU.Observe(ru)
+
 	// KV RUs are not included here, these metrics correspond only to the SQL pod.
 	c.mu.Lock()
 	c.mu.consumption.PodsCpuSeconds += deltaCPU
@@ -194,7 +202,9 @@ func (c *tenantSideCostController) updateRunState(ctx context.Context) {
 	c.run.consumption = newConsumption
 	c.run.cpuUsage = newCPUUsage
 
-	c.limiter.RemoveTokens(newTime, float64(RequestUnit(ru)))
+	if !c.costCfg.DryRunMode {
+		c.limiter.RemoveTokens(newTime, float64(RequestUnit(ru)))
+	}
 	log.Info("[tenant controllor] update run state, use cpu second", zap.Float64("deltaCPU", deltaCPU), zap.Float64("ru", ru), zap.Float64("newCPUUsage", newCPUUsage), zap.Float64("oldCPUUsage", c.run.cpuUsage), zap.Float64("remaining", c.limiter.AvailableTokens(newTime)), zap.Float64("limit", float64(c.limiter.Limit())))
 }
 
@@ -404,6 +414,9 @@ func (c *tenantSideCostController) mainLoop(ctx context.Context) {
 func (c *tenantSideCostController) OnRequestWait(
 	ctx context.Context, info RequestInfo,
 ) error {
+	if c.costCfg.DryRunMode {
+		return nil
+	}
 	return c.limiter.WaitN(ctx, int(c.costCfg.RequestCost(info)))
 }
 
@@ -413,24 +426,40 @@ func (c *tenantSideCostController) OnRequestWait(
 func (c *tenantSideCostController) OnResponse(
 	ctx context.Context, req RequestInfo, resp ResponseInfo,
 ) {
-
-	if resp.CPUTime() > 0 || resp.ReadBytes() > 0 {
+	if (resp.CPUTime() > 0 || resp.ReadBytes() > 0) && !c.costCfg.DryRunMode {
 		c.limiter.RemoveTokens(time.Now(), float64(c.costCfg.ResponseCost(resp)))
 	}
 
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if isWrite, writeBytes := req.IsWrite(); isWrite {
+	var (
+		isWrite, writeBytes      = req.IsWrite()
+		writeRU, readRU, kvCPURU float64
+	)
+	if isWrite {
 		c.mu.consumption.WriteRequests++
 		c.mu.consumption.WriteBytes += uint64(writeBytes)
-		writeRU := float64(c.costCfg.KVWriteCost(writeBytes))
-		c.mu.consumption.RU += writeRU
+		kvCPUMilliseconds := resp.CPUTime()
+		c.mu.consumption.KvWriteCpuMilliseconds += uint64(kvCPUMilliseconds)
+		writeRU = float64(c.costCfg.KVWriteCost(writeBytes))
+		kvCPURU = float64(c.costCfg.KVCPUCost(kvCPUMilliseconds))
+		c.mu.consumption.RU += writeRU + kvCPURU
 	} else {
 		c.mu.consumption.ReadRequests++
 		readBytes := resp.ReadBytes()
 		c.mu.consumption.ReadBytes += uint64(readBytes)
-		readRU := float64(c.costCfg.KVReadCost(readBytes))
-		c.mu.consumption.RU += readRU
+		kvCPUMilliseconds := resp.CPUTime()
+		c.mu.consumption.KvReadCpuMilliseconds += uint64(kvCPUMilliseconds)
+		readRU = float64(c.costCfg.KVReadCost(readBytes))
+		kvCPURU = float64(c.costCfg.KVCPUCost(kvCPUMilliseconds))
+		c.mu.consumption.RU += readRU + kvCPURU
+	}
+	c.mu.Unlock()
+
+	if isWrite {
+		metrics.WriteByteRU.Observe(writeRU)
+		metrics.WriteKVCPURU.Observe(kvCPURU)
+	} else {
+		metrics.ReadByteRU.Observe(readRU)
+		metrics.ReadKVCPURU.Observe(kvCPURU)
 	}
 }
