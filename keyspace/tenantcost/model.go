@@ -152,27 +152,27 @@ func MakeResponseInfo(resp *tikvrpc.Response) ResponseInfo {
 	}
 	switch r := resp.Resp.(type) {
 	case *coprocessor.Response:
-		detailV2 = r.ExecDetailsV2
-		detail = r.ExecDetails
+		detailV2 = r.GetExecDetailsV2()
+		detail = r.GetExecDetails()
 		respDataSize = int64(r.Data.Size())
 	case *tikvrpc.CopStreamResponse:
 		// streaming request returns io.EOF, so the first CopStreamResponse.Response maybe nil.
 		if r.Response != nil {
-			detailV2 = r.Response.ExecDetailsV2
-			detail = r.Response.ExecDetails
+			detailV2 = r.Response.GetExecDetailsV2()
+			detail = r.Response.GetExecDetails()
 		}
 		respDataSize = int64(r.Data.Size())
 	case *kvrpcpb.GetResponse:
-		detailV2 = r.ExecDetailsV2
+		detailV2 = r.GetExecDetailsV2()
 	case *kvrpcpb.ScanResponse:
 		readBytes = int64(r.Size())
 	}
 
-	if detailV2 != nil && detailV2.ScanDetailV2 != nil {
-		cpuTime = detailV2.TimeDetail.ProcessWallTimeMs
-		readBytes = int64(detailV2.ScanDetailV2.GetProcessedVersionsSize())
-	} else if detail != nil && detail.ScanDetail != nil {
-		cpuTime = detail.TimeDetail.ProcessWallTimeMs
+	if detailV2 != nil {
+		cpuTime = detailV2.GetTimeDetail().GetProcessWallTimeMs()
+		readBytes = int64(detailV2.GetScanDetailV2().GetProcessedVersionsSize())
+	} else if detail != nil {
+		cpuTime = detail.GetTimeDetail().GetProcessWallTimeMs()
 		// readBytes = detail.ScanDetail.Lock.ReadBytes + detail.ScanDetail.Write.ReadBytes + detail.ScanDetail.Write.ReadBytes
 		readBytes = respDataSize
 	}
