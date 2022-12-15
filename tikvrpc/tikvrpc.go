@@ -1263,5 +1263,16 @@ func (req *Request) IsTxnWriteRequest() bool {
 	return false
 }
 
+// IsTxnWriteRequest checks if the request is a transactional write request. This is used for failpoints to inject
+// errors to specified RPC requests.
+func (req *Request) IsRawWriteRequest() bool {
+	if req.Type == CmdRawPut ||
+		req.Type == CmdRawBatchPut ||
+		req.Type == CmdRawDelete {
+		return true
+	}
+	return false
+}
+
 // ResourceGroupTagger is used to fill the ResourceGroupTag in the kvrpcpb.Context.
 type ResourceGroupTagger func(req *Request)

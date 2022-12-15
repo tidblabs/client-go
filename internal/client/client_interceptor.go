@@ -1,28 +1,18 @@
-// Copyright 2021 TiKV Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 package client
 
 import (
 	"context"
 	"time"
 
+	tenant_interceptor "github.com/tikv/client-go/v2/keyspace/interceptor"
+	"github.com/tikv/client-go/v2/keyspace/resourcegroup"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
 )
 
 var _ Client = interceptedClient{}
+
+var TenantKVControllor tenant_interceptor.ResourceSideKVInterceptor = nil
 
 type interceptedClient struct {
 	Client
@@ -34,8 +24,38 @@ func NewInterceptedClient(client Client) Client {
 }
 
 func (r interceptedClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	var tenantRPCInterceptor interceptor.RPCInterceptor
+	if TenantKVControllor != nil {
+		tenantRPCInterceptor = func(next interceptor.RPCInterceptorFunc) interceptor.RPCInterceptorFunc {
+			return func(target string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+				reqInfo := resourcegroup.MakeRequestInfo(req)
+				err := TenantKVControllor.OnRequestWait(ctx, "demo", reqInfo)
+				if err != nil {
+					return nil, err
+				}
+				resp, err := next(target, req)
+				if resp != nil {
+					respInfo := resourcegroup.MakeResponseInfo(resp)
+					TenantKVControllor.OnResponse(context.Background(), "demo", reqInfo, respInfo)
+				}
+				return resp, err
+			}
+		}
+	}
+
+	var finalInterceptor interceptor.RPCInterceptor
+	if tenantRPCInterceptor != nil {
+		finalInterceptor = tenantRPCInterceptor
+	}
 	if it := interceptor.GetRPCInterceptorFromCtx(ctx); it != nil {
-		return it(func(target string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+		if finalInterceptor != nil {
+			finalInterceptor = interceptor.ChainRPCInterceptors(finalInterceptor, it)
+		} else {
+			finalInterceptor = it
+		}
+	}
+	if finalInterceptor != nil {
+		return finalInterceptor(func(target string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 			return r.Client.SendRequest(ctx, target, req, timeout)
 		})(addr, req)
 	}
