@@ -60,8 +60,8 @@ require (
 	stathat.com/c/consistent v1.0.0 // indirect
 )
 
-replace github.com/tikv/pd => github.com/tidblabs/pd v0.0.0-20221215144545-1ec128abab77
+replace github.com/tikv/pd => github.com/tidblabs/pd v0.0.0-20221222021041-db3be941c254
 
-replace github.com/tikv/pd/client => github.com/tidblabs/pd/client v0.0.0-20221215144545-1ec128abab77
+replace github.com/tikv/pd/client => github.com/tidblabs/pd/client v0.0.0-20221222021041-db3be941c254
 
-replace github.com/pingcap/kvproto => github.com/nolouch/kvproto v0.0.0-20221213082243-56bb4e32d53b
+replace github.com/pingcap/kvproto => github.com/nolouch/kvproto v0.0.0-20221220074114-39f3378735d2

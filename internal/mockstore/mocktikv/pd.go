@@ -300,9 +300,15 @@ func (c *pdClient) ListResourceGroups(ctx context.Context) ([]*resource_manager.
 func (c *pdClient) GetResourceGroup(ctx context.Context, resourceGroupName string) (*resource_manager.ResourceGroup, error) {
 	return nil, nil
 }
-func (c *pdClient) AddResourceGroup(ctx context.Context, resourceGroupName string, settings *resource_manager.GroupSettings) ([]byte, error) {
-	return nil, nil
+func (c *pdClient) AddResourceGroup(ctx context.Context, resourceGroupName string, settings *resource_manager.GroupSettings) (string, error) {
+	return "", nil
 }
-func (c *pdClient) AcquireTokenBuckets(ctx context.Context, resourceGroupName string, targetRequestPeriodMs uint64, requestedResource []*resource_manager.ResourceDetail, consumptionSinceLastRequest []resource_manager.ResourceDetail) ([]*resource_manager.GrantedTokenBucket, error) {
+func (c *pdClient) ModifyResourceGroup(ctx context.Context, resourceGroupName string, settings *resource_manager.GroupSettings) (string, error) {
+	return "", nil
+}
+func (c *pdClient) DeleteResourceGroup(ctx context.Context, resourceGroupName string) (string, error) {
+	return "", nil
+}
+func (c *pdClient) AcquireTokenBuckets(ctx context.Context, request *resource_manager.TokenBucketsRequest) ([]*resource_manager.TokenBucketResponse, error) {
 	return nil, nil
 }

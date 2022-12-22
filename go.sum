@@ -126,8 +126,8 @@ github.com/modern-go/reflect2 v0.0.0-20180701023420-4b7aa43c6742/go.mod h1:bx2lN
 github.com/modern-go/reflect2 v1.0.1/go.mod h1:bx2lNnkwVCuqBIxFjflWJWanXIb3RllmbCylyMrvgv0=
 github.com/mwitkow/go-conntrack v0.0.0-20161129095857-cc309e4a2223/go.mod h1:qRWi+5nqEBWmkhHvq77mSJWrCKwh8bxhgT7d/eI7P4U=
 github.com/mwitkow/go-conntrack v0.0.0-20190716064945-2f068394615f/go.mod h1:qRWi+5nqEBWmkhHvq77mSJWrCKwh8bxhgT7d/eI7P4U=
-github.com/nolouch/kvproto v0.0.0-20221213082243-56bb4e32d53b h1:rG3MISM8qS9FfxGIr37oY8zxXkVhkbUMOpyBVnvt7n4=
-github.com/nolouch/kvproto v0.0.0-20221213082243-56bb4e32d53b/go.mod h1:OYtxs0786qojVTmkVeufx93xe+jUgm56GUYRIKnmaGI=
+github.com/nolouch/kvproto v0.0.0-20221220074114-39f3378735d2 h1:vn2desluH5tBWh5b+1lSNbBo64pn/AG0gxA7fzdcXWc=
+github.com/nolouch/kvproto v0.0.0-20221220074114-39f3378735d2/go.mod h1:OYtxs0786qojVTmkVeufx93xe+jUgm56GUYRIKnmaGI=
 github.com/nxadm/tail v1.4.4/go.mod h1:kenIhsEOeOJmVchQTgglprH7qJGnHDVpk1VPCcaMI8A=
 github.com/nxadm/tail v1.4.8 h1:nPr65rt6Y5JFSKQO7qToXr7pePgD6Gwiw05lkbyAQTE=
 github.com/nxadm/tail v1.4.8/go.mod h1:+ncqLTQzXmGhMZNUePPaPqPvBxHAIsmXswZKocGu+AU=
@@ -196,10 +196,10 @@ github.com/stretchr/testify v1.7.0/go.mod h1:6Fq8oRcR53rry900zMqJjRRixrwX3KX962/
 github.com/stretchr/testify v1.7.1/go.mod h1:6Fq8oRcR53rry900zMqJjRRixrwX3KX962/h/Wwjteg=
 github.com/stretchr/testify v1.8.0 h1:pSgiaMZlXftHpm5L7V1+rVB+AZJydKsMxsQBIJw4PKk=
 github.com/stretchr/testify v1.8.0/go.mod h1:yNjHg4UonilssWZ8iaSj1OCr/vHnekPRkoO+kdMU+MU=
-github.com/tidblabs/pd v0.0.0-20221215144545-1ec128abab77 h1:QmEcG6vE92l2r2RPsZ86LVMj+Tf2g+Gxz80H9226ag8=
-github.com/tidblabs/pd v0.0.0-20221215144545-1ec128abab77/go.mod h1:nbVRlWt/tq7zr7gAzmjIuS2cooAVWdYk2pRoNc2ejZI=
-github.com/tidblabs/pd/client v0.0.0-20221215144545-1ec128abab77 h1:tBRdzGw3EzcFU9D9SQjGi2eh146mgzwRpNRREpVGkek=
-github.com/tidblabs/pd/client v0.0.0-20221215144545-1ec128abab77/go.mod h1:KPu1nep04rYMR33VB65NuGo9SgLvJ/juTN82hHUpwT8=
+github.com/tidblabs/pd v0.0.0-20221222021041-db3be941c254 h1:wc3p2J1SiYeyGS5ClZ67ZDg2ouQiBrU+mjtkzErxi7s=
+github.com/tidblabs/pd v0.0.0-20221222021041-db3be941c254/go.mod h1:PpgqnYUA6dnuHKmol7XVxkb6oKxzJ+YjsOamWCwrATw=
+github.com/tidblabs/pd/client v0.0.0-20221222021041-db3be941c254 h1:ChBFxejvM8yhi6E7R6EDq9sGXlqWyIwJcWy0ri5Pd4A=
+github.com/tidblabs/pd/client v0.0.0-20221222021041-db3be941c254/go.mod h1:+YPCXGf03hN+LJV4ZvYjgnj49KnCdyffAuog6iFjdfI=
 github.com/twmb/murmur3 v1.1.3 h1:D83U0XYKcHRYwYIpBKf3Pks91Z0Byda/9SJ8B6EMRcA=
 github.com/twmb/murmur3 v1.1.3/go.mod h1:Qq/R7NUyOfr65zD+6Q5IHKsJLwP7exErjN6lyyq3OSQ=
 github.com/yuin/goldmark v1.1.27/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
