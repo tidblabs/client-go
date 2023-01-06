@@ -2,11 +2,9 @@ package tenantcost
 
 import (
 	"context"
-	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/log"
 	"github.com/tikv/client-go/v2/metrics"
 	"go.uber.org/zap"
@@ -35,24 +33,24 @@ const extendedReportingPeriodFactor = 4
 
 const bufferRUs = 5000
 
-type TokenBucketProvider interface {
-	TokenBucket(
-		ctx context.Context, in *pdpb.TokenBucketRequest,
-	) (*pdpb.TokenBucketResponse, error)
-}
+// type TokenBucketProvider interface {
+// 	TokenBucket(
+// 		ctx context.Context, in *pdpb.TokenBucketRequest,
+// 	) (*pdpb.TokenBucketResponse, error)
+// }
 
 const initialRquestUnits = 10000
 const initialRate = 100
 
 func newTenantSideCostController(
 	tenantID uint64,
-	provider TokenBucketProvider,
+	//	provider TokenBucketProvider,
 	config *Config,
 ) (*tenantSideCostController, error) {
 	c := &tenantSideCostController{
-		tenantID:        tenantID,
-		provider:        provider,
-		responseChan:    make(chan *pdpb.TokenBucketResponse, 1),
+		tenantID: tenantID,
+		// provider:        provider,
+		// responseChan:    make(chan *pdpb.TokenBucketResponse, 1),
 		lowRUNotifyChan: make(chan struct{}, 1),
 	}
 	c.limiter = NewLimiter(initialRate, initialRquestUnits, c.lowRUNotifyChan)
@@ -68,27 +66,16 @@ func newTenantSideCostController(
 // NewTenantSideCostController creates an object which implements the
 // server.TenantSideCostController interface.
 func NewTenantSideCostController(
-	tenantID uint64, provider TokenBucketProvider, config *Config,
+	tenantID uint64, config *Config,
 ) (*tenantSideCostController, error) {
-	return newTenantSideCostController(tenantID, provider, config)
+	return newTenantSideCostController(tenantID, config)
 }
 
 type tenantSideCostController struct {
 	tenantID            uint64
-	provider            TokenBucketProvider
 	limiter             *Limiter
 	instanceFingerprint string
 	costCfg             Config
-
-	mu struct {
-		sync.Mutex
-
-		consumption pdpb.Consumption
-	}
-
-	// responseChan is used to receive results from token bucket requests, which
-	// are run in a separate goroutine. A nil response indicates an error.
-	responseChan chan *pdpb.TokenBucketResponse
 
 	// lowRUNotifyChan is used when the number of available RUs is running low and
 	// we need to send an early token bucket request.
@@ -99,8 +86,6 @@ type tenantSideCostController struct {
 		now time.Time
 		// cpuUsage is the last CPU usage of the instance returned by UserCPUSecs.
 		cpuUsage float64
-		// consumption stores the last value of mu.consumption.
-		consumption pdpb.Consumption
 
 		// targetPeriod stores the value of the TargetPeriodSetting setting at the
 		// last update.
@@ -122,8 +107,7 @@ type tenantSideCostController struct {
 		// time.
 		requestNeedsRetry bool
 
-		lastRequestTime         time.Time
-		lastReportedConsumption pdpb.Consumption
+		lastRequestTime time.Time
 
 		lastDeadline time.Time
 		lastRate     float64
@@ -191,168 +175,19 @@ func (c *tenantSideCostController) updateRunState(ctx context.Context) {
 
 	metrics.PodCPURU.Observe(ru)
 
-	// KV RUs are not included here, these metrics correspond only to the SQL pod.
-	c.mu.Lock()
-	c.mu.consumption.PodsCpuSeconds += deltaCPU
-	c.mu.consumption.RU += ru
-	newConsumption := c.mu.consumption
-	c.mu.Unlock()
-
 	c.run.now = newTime
-	c.run.consumption = newConsumption
 	c.run.cpuUsage = newCPUUsage
-
-	if !c.costCfg.DryRunMode {
-		c.limiter.RemoveTokens(newTime, float64(RequestUnit(ru)))
-	}
 	log.Info("[tenant controllor] update run state, use cpu second", zap.Float64("deltaCPU", deltaCPU), zap.Float64("ru", ru), zap.Float64("newCPUUsage", newCPUUsage), zap.Float64("oldCPUUsage", c.run.cpuUsage), zap.Float64("remaining", c.limiter.AvailableTokens(newTime)), zap.Float64("limit", float64(c.limiter.Limit())))
 }
 
 // updateAvgRUPerSec is called exactly once per mainLoopUpdateInterval.
 func (c *tenantSideCostController) updateAvgRUPerSec() {
-	delta := c.run.consumption.RU - c.run.avgRUPerSecLastRU
-	c.run.avgRUPerSec = movingAvgFactor*c.run.avgRUPerSec + (1-movingAvgFactor)*delta
-	c.run.avgRUPerSecLastRU = c.run.consumption.RU
-	log.Info("[tenant controllor] update avg ru per sec", zap.Float64("avgRUPerSec", c.run.avgRUPerSec), zap.Float64("avgRUPerSecLastRU", c.run.avgRUPerSecLastRU), zap.Any("consumption", c.run.consumption))
 }
 
 // shouldReportConsumption decides if it's time to send a token bucket request
 // to report consumption.
 func (c *tenantSideCostController) shouldReportConsumption() bool {
-	if c.run.requestInProgress {
-		return false
-	}
-
-	timeSinceLastRequest := c.run.now.Sub(c.run.lastRequestTime)
-	if timeSinceLastRequest >= c.run.targetPeriod {
-		consumptionToReport := c.run.consumption.RU - c.run.lastReportedConsumption.RU
-		if consumptionToReport >= consumptionReportingThreshold {
-			return true
-		}
-		if timeSinceLastRequest >= extendedReportingPeriodFactor*c.run.targetPeriod {
-			return true
-		}
-	}
-
 	return false
-}
-
-func (c *tenantSideCostController) sendTokenBucketRequest(ctx context.Context, source string) {
-	deltaConsumption := c.run.consumption
-	Sub(&deltaConsumption, &c.run.lastReportedConsumption)
-
-	var requested float64
-
-	if !c.run.initialRequestCompleted {
-		requested = initialRquestUnits
-	} else {
-		requested = c.run.avgRUPerSec*c.run.targetPeriod.Seconds() + bufferRUs
-
-		requested -= float64(c.limiter.AvailableTokens(c.run.now))
-		if requested < 0 {
-			requested = 0
-		}
-	}
-
-	req := pdpb.TokenBucketRequest{
-		TenantId:                    c.tenantID,
-		InstanceFingerprint:         c.instanceFingerprint,
-		ConsumptionSinceLastRequest: deltaConsumption,
-		RequestedRU:                 requested,
-		TargetRequestPeriodSeconds:  uint64(c.run.targetPeriod.Seconds()),
-	}
-	now := time.Now()
-	log.Info("[tenant controllor] send token bucket request", zap.Time("now", now), zap.Any("req", req), zap.String("source", source))
-
-	c.run.lastRequestTime = c.run.now
-	c.run.lastReportedConsumption = c.run.consumption
-	c.run.requestInProgress = true
-	go func() {
-		resp, err := c.provider.TokenBucket(ctx, &req)
-		if err != nil {
-			// Don't log any errors caused by the stopper canceling the context.
-			if !errors.ErrorEqual(err, context.Canceled) {
-				log.L().Sugar().Infof("TokenBucket RPC error: %v", err)
-			}
-			resp = nil
-		} else if resp.Header.Error != nil {
-			// This is a "logic" error which indicates a configuration problem on the
-			// host side. We will keep retrying periodically.
-			log.L().Sugar().Infof("TokenBucket error: %v", resp.Header.Error)
-			resp = nil
-		}
-		log.Info("[tenant controllor] token bucket response", zap.Time("now", time.Now()), zap.Any("resp", resp), zap.String("source", source), zap.Duration("latency", time.Since(now)))
-		c.responseChan <- resp
-	}()
-}
-
-func (c *tenantSideCostController) handleTokenBucketResponse(
-	ctx context.Context, resp *pdpb.TokenBucketResponse,
-) {
-	c.run.fallbackRate = resp.FallbackRate
-	if !c.run.initialRequestCompleted {
-		c.run.initialRequestCompleted = true
-		// This is the first successful request. Take back the initial RUs that we
-		// used to pre-fill the bucket.
-		c.limiter.RemoveTokens(c.run.now, initialRquestUnits)
-	}
-
-	granted := resp.GrantedRU
-	if granted == 0 {
-		// We don't have any RUs to give back.
-		if !c.run.fallbackRateStart.IsZero() {
-			c.sendTokenBucketRequest(ctx, "resp_0_granted")
-		}
-		return
-	}
-	c.run.fallbackRateStart = time.Time{}
-
-	if !c.run.lastDeadline.IsZero() {
-		// If last request came with a trickle duration, we may have RUs that were
-		// not made available to the bucket yet; throw them together with the newly
-		// granted RUs.
-		if since := c.run.lastDeadline.Sub(c.run.now); since > 0 {
-			granted += c.run.lastRate * since.Seconds()
-		}
-	}
-	if c.run.setupNotificationTimer != nil {
-		c.run.setupNotificationTimer.Stop()
-		c.run.setupNotificationTimer = nil
-		c.run.setupNotificationCh = nil
-	}
-	notifyThreshold := granted * notifyFraction
-	if notifyThreshold < bufferRUs {
-		notifyThreshold = bufferRUs
-	}
-
-	var cfg tokenBucketReconfigureArgs
-	if resp.TrickleDurationSeconds == 0 {
-		cfg.NewTokens = granted
-		cfg.NewRate = 0
-		cfg.NotifyThreshold = notifyThreshold
-		c.run.lastDeadline = time.Time{}
-	} else {
-		// We received a batch of tokens that can only be used over the
-		// TrickleDuration. Set up the token bucket to notify us a bit before this
-		// period elapses (unless we accumulate enough unused tokens, in which case
-		// we get notified when the tokens are running low).
-		deadline := c.run.now.Add(time.Duration(resp.TrickleDurationSeconds) * time.Second)
-		cfg.NewRate = granted / float64(resp.TrickleDurationSeconds)
-
-		timerDuration := resp.TrickleDurationSeconds - 1
-		if timerDuration <= 0 {
-			timerDuration = (resp.TrickleDurationSeconds + 1) / 2
-		}
-		c.run.setupNotificationTimer = time.NewTimer(time.Duration(timerDuration) * time.Second)
-		c.run.setupNotificationCh = c.run.setupNotificationTimer.C
-		c.run.setupNotificationThreshold = notifyThreshold
-
-		c.run.lastDeadline = deadline
-	}
-	c.run.lastRate = cfg.NewRate
-	c.limiter.Reconfigure(c.run.now, cfg)
-	log.Info("[tenant controllor] update local token bucket", zap.Float64("granted", granted), zap.Float64("rate", cfg.NewRate), zap.Float64("tokens", cfg.NewTokens), zap.Float64("notifyThreshold", cfg.NotifyThreshold))
-
 }
 
 func (c *tenantSideCostController) mainLoop(ctx context.Context) {
@@ -362,7 +197,7 @@ func (c *tenantSideCostController) mainLoop(ctx context.Context) {
 	tickerCh := ticker.C
 
 	c.initRunState(ctx)
-	c.sendTokenBucketRequest(ctx, "init")
+	//	c.sendTokenBucketRequest(ctx, "init")
 
 	for {
 		select {
@@ -377,16 +212,7 @@ func (c *tenantSideCostController) mainLoop(ctx context.Context) {
 			}
 			if c.run.requestNeedsRetry || c.shouldReportConsumption() {
 				c.run.requestNeedsRetry = false
-				c.sendTokenBucketRequest(ctx, "report")
-			}
-		case resp := <-c.responseChan:
-			c.run.requestInProgress = false
-			if resp != nil {
-				c.updateRunState(ctx)
-				c.handleTokenBucketResponse(ctx, resp)
-			} else {
-				// A nil response indicates a failure (which would have been logged).
-				c.run.requestNeedsRetry = true
+				//		c.sendTokenBucketRequest(ctx, "report")
 			}
 		case <-c.run.setupNotificationCh:
 			c.run.setupNotificationTimer = nil
@@ -400,7 +226,7 @@ func (c *tenantSideCostController) mainLoop(ctx context.Context) {
 			c.run.fallbackRateStart = c.run.now.Add(200 * time.Millisecond)
 			if !c.run.requestInProgress {
 				log.Warn("[tenant controllor] low RU notification", zap.Float64("threshold", c.run.setupNotificationThreshold), zap.Time("now", c.run.now), zap.Time("rate-start", c.run.fallbackRateStart))
-				c.sendTokenBucketRequest(ctx, "low_ru")
+				//	c.sendTokenBucketRequest(ctx, "low_ru")
 			}
 		case <-ctx.Done():
 
@@ -414,10 +240,8 @@ func (c *tenantSideCostController) mainLoop(ctx context.Context) {
 func (c *tenantSideCostController) OnRequestWait(
 	ctx context.Context, info RequestInfo,
 ) error {
-	if c.costCfg.DryRunMode {
-		return nil
-	}
-	return c.limiter.WaitN(ctx, int(c.costCfg.RequestCost(info)))
+	// c.limit.WaitN(ctx, c.costCfg.RequestCost(info))
+	return nil
 }
 
 // OnResponse is part of the multitenant.TenantSideBatchInterceptor interface.
@@ -426,34 +250,20 @@ func (c *tenantSideCostController) OnRequestWait(
 func (c *tenantSideCostController) OnResponse(
 	ctx context.Context, req RequestInfo, resp ResponseInfo,
 ) {
-	if (resp.CPUTime() > 0 || resp.ReadBytes() > 0) && !c.costCfg.DryRunMode {
-		c.limiter.RemoveTokens(time.Now(), float64(c.costCfg.ResponseCost(resp)))
-	}
-
-	c.mu.Lock()
 	var (
 		isWrite, writeBytes      = req.IsWrite()
 		writeRU, readRU, kvCPURU float64
 	)
 	if isWrite {
-		c.mu.consumption.WriteRequests++
-		c.mu.consumption.WriteBytes += uint64(writeBytes)
 		kvCPUMilliseconds := resp.CPUTime()
-		c.mu.consumption.KvWriteCpuMilliseconds += uint64(kvCPUMilliseconds)
 		writeRU = float64(c.costCfg.KVWriteCost(writeBytes))
 		kvCPURU = float64(c.costCfg.KVCPUCost(kvCPUMilliseconds))
-		c.mu.consumption.RU += writeRU + kvCPURU
 	} else {
-		c.mu.consumption.ReadRequests++
 		readBytes := resp.ReadBytes()
-		c.mu.consumption.ReadBytes += uint64(readBytes)
 		kvCPUMilliseconds := resp.CPUTime()
-		c.mu.consumption.KvReadCpuMilliseconds += uint64(kvCPUMilliseconds)
 		readRU = float64(c.costCfg.KVReadCost(readBytes))
 		kvCPURU = float64(c.costCfg.KVCPUCost(kvCPUMilliseconds))
-		c.mu.consumption.RU += readRU + kvCPURU
 	}
-	c.mu.Unlock()
 
 	if isWrite {
 		metrics.WriteByteRU.Observe(writeRU)

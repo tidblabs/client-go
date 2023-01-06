@@ -5,7 +5,6 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
@@ -169,10 +168,10 @@ func MakeResponseInfo(resp *tikvrpc.Response) ResponseInfo {
 	}
 
 	if detailV2 != nil {
-		cpuTime = detailV2.GetTimeDetail().GetProcessWallTimeMs()
+		cpuTime = int64(detailV2.GetTimeDetail().GetProcessWallTimeMs())
 		readBytes = int64(detailV2.GetScanDetailV2().GetProcessedVersionsSize())
 	} else if detail != nil {
-		cpuTime = detail.GetTimeDetail().GetProcessWallTimeMs()
+		cpuTime = int64(detail.GetTimeDetail().GetProcessWallTimeMs())
 		// readBytes = detail.ScanDetail.Lock.ReadBytes + detail.ScanDetail.Write.ReadBytes + detail.ScanDetail.Write.ReadBytes
 		readBytes = respDataSize
 	}
@@ -195,65 +194,65 @@ func TestingResponseInfo(readBytes int64) ResponseInfo {
 	return ResponseInfo{readBytes: readBytes}
 }
 
-// Add consumption from the given structure.
-func Add(self *pdpb.Consumption, other *pdpb.Consumption) {
-	self.RU += other.RU
-	self.ReadRequests += other.ReadRequests
-	self.ReadBytes += other.ReadBytes
-	self.WriteRequests += other.WriteRequests
-	self.WriteBytes += other.WriteBytes
-	self.PodsCpuSeconds += other.PodsCpuSeconds
-	self.KvReadCpuMilliseconds += other.KvReadCpuMilliseconds
-	self.KvWriteCpuMilliseconds += other.KvWriteCpuMilliseconds
-}
+// // Add consumption from the given structure.
+// func Add(self *pdpb.Consumption, other *pdpb.Consumption) {
+// 	self.RU += other.RU
+// 	self.ReadRequests += other.ReadRequests
+// 	self.ReadBytes += other.ReadBytes
+// 	self.WriteRequests += other.WriteRequests
+// 	self.WriteBytes += other.WriteBytes
+// 	self.PodsCpuSeconds += other.PodsCpuSeconds
+// 	self.KvReadCpuMilliseconds += other.KvReadCpuMilliseconds
+// 	self.KvWriteCpuMilliseconds += other.KvWriteCpuMilliseconds
+// }
 
-// Sub subtracts consumption, making sure no fields become negative.
-func Sub(c *pdpb.Consumption, other *pdpb.Consumption) {
-	if c.RU < other.RU {
-		c.RU = 0
-	} else {
-		c.RU -= other.RU
-	}
+// // Sub subtracts consumption, making sure no fields become negative.
+// func Sub(c *pdpb.Consumption, other *pdpb.Consumption) {
+// 	if c.RU < other.RU {
+// 		c.RU = 0
+// 	} else {
+// 		c.RU -= other.RU
+// 	}
 
-	if c.ReadRequests < other.ReadRequests {
-		c.ReadRequests = 0
-	} else {
-		c.ReadRequests -= other.ReadRequests
-	}
+// 	if c.ReadRequests < other.ReadRequests {
+// 		c.ReadRequests = 0
+// 	} else {
+// 		c.ReadRequests -= other.ReadRequests
+// 	}
 
-	if c.ReadBytes < other.ReadBytes {
-		c.ReadBytes = 0
-	} else {
-		c.ReadBytes -= other.ReadBytes
-	}
+// 	if c.ReadBytes < other.ReadBytes {
+// 		c.ReadBytes = 0
+// 	} else {
+// 		c.ReadBytes -= other.ReadBytes
+// 	}
 
-	if c.WriteRequests < other.WriteRequests {
-		c.WriteRequests = 0
-	} else {
-		c.WriteRequests -= other.WriteRequests
-	}
+// 	if c.WriteRequests < other.WriteRequests {
+// 		c.WriteRequests = 0
+// 	} else {
+// 		c.WriteRequests -= other.WriteRequests
+// 	}
 
-	if c.WriteBytes < other.WriteBytes {
-		c.WriteBytes = 0
-	} else {
-		c.WriteBytes -= other.WriteBytes
-	}
+// 	if c.WriteBytes < other.WriteBytes {
+// 		c.WriteBytes = 0
+// 	} else {
+// 		c.WriteBytes -= other.WriteBytes
+// 	}
 
-	if c.PodsCpuSeconds < other.PodsCpuSeconds {
-		c.PodsCpuSeconds = 0
-	} else {
-		c.PodsCpuSeconds -= other.PodsCpuSeconds
-	}
+// 	if c.PodsCpuSeconds < other.PodsCpuSeconds {
+// 		c.PodsCpuSeconds = 0
+// 	} else {
+// 		c.PodsCpuSeconds -= other.PodsCpuSeconds
+// 	}
 
-	if c.KvReadCpuMilliseconds < other.KvReadCpuMilliseconds {
-		c.KvReadCpuMilliseconds = 0
-	} else {
-		c.KvReadCpuMilliseconds -= other.KvReadCpuMilliseconds
-	}
+// 	if c.KvReadCpuMilliseconds < other.KvReadCpuMilliseconds {
+// 		c.KvReadCpuMilliseconds = 0
+// 	} else {
+// 		c.KvReadCpuMilliseconds -= other.KvReadCpuMilliseconds
+// 	}
 
-	if c.KvWriteCpuMilliseconds < other.KvWriteCpuMilliseconds {
-		c.KvWriteCpuMilliseconds = 0
-	} else {
-		c.KvWriteCpuMilliseconds -= other.KvWriteCpuMilliseconds
-	}
-}
+// 	if c.KvWriteCpuMilliseconds < other.KvWriteCpuMilliseconds {
+// 		c.KvWriteCpuMilliseconds = 0
+// 	} else {
+// 		c.KvWriteCpuMilliseconds -= other.KvWriteCpuMilliseconds
+// 	}
+// }
