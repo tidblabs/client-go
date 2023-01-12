@@ -1,14 +1,11 @@
 package resourcegroup
 
 import (
-	"reflect"
 	"unsafe"
 
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/log"
 	"github.com/tikv/client-go/v2/tikvrpc"
-	"go.uber.org/zap"
 )
 
 type RequestInfo struct {
@@ -68,8 +65,10 @@ func MakeResponseInfo(resp *tikvrpc.Response) *ResponseInfo {
 			detailV2 = r.Response.ExecDetailsV2
 			detail = r.Response.ExecDetails
 		}
+	case *kvrpcpb.GetResponse:
+
 	default:
-		log.Warn("[kv resource]unreachable resp type", zap.Any("type", reflect.TypeOf(r)))
+		// log.Warn("[kv resource]unreachable resp type", zap.Any("type", reflect.TypeOf(r)))
 		return &ResponseInfo{readBytes}
 	}
 

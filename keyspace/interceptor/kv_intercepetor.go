@@ -3,7 +3,7 @@ package interceptor
 import (
 	"context"
 
-	resource "github.com/tikv/pd/pkg/resourcecontroller"
+	resource "github.com/tikv/pd/pkg/mcs/resource_manager/client"
 )
 
 type ResourceSideKVInterceptor interface {
@@ -21,5 +21,5 @@ type ResourceSideKVInterceptor interface {
 	//
 	// If the context (or a parent context) was created using
 	// WithTenantCostControlExemption, the method is a no-op.
-	OnResponse(ctx context.Context, resourceGroupName string, req resource.RequestInfo, resp resource.ResponseInfo)
+	OnResponse(ctx context.Context, resourceGroupName string, req resource.RequestInfo, resp resource.ResponseInfo) error
 }

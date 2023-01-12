@@ -300,15 +300,19 @@ func (c *pdClient) ListResourceGroups(ctx context.Context) ([]*resource_manager.
 func (c *pdClient) GetResourceGroup(ctx context.Context, resourceGroupName string) (*resource_manager.ResourceGroup, error) {
 	return nil, nil
 }
-func (c *pdClient) AddResourceGroup(ctx context.Context, resourceGroupName string, settings *resource_manager.GroupSettings) (string, error) {
+func (c *pdClient) AddResourceGroup(ctx context.Context, metaGroup *resource_manager.ResourceGroup) (string, error) {
 	return "", nil
 }
-func (c *pdClient) ModifyResourceGroup(ctx context.Context, resourceGroupName string, settings *resource_manager.GroupSettings) (string, error) {
+func (c *pdClient) ModifyResourceGroup(ctx context.Context, metaGroup *resource_manager.ResourceGroup) (string, error) {
 	return "", nil
 }
 func (c *pdClient) DeleteResourceGroup(ctx context.Context, resourceGroupName string) (string, error) {
 	return "", nil
 }
 func (c *pdClient) AcquireTokenBuckets(ctx context.Context, request *resource_manager.TokenBucketsRequest) ([]*resource_manager.TokenBucketResponse, error) {
+	return nil, nil
+}
+
+func (c *pdClient) UpdateKeyspaceState(ctx context.Context, id uint32, state keyspacepb.KeyspaceState) (*keyspacepb.KeyspaceMeta, error) {
 	return nil, nil
 }

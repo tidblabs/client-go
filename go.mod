@@ -13,7 +13,7 @@ require (
 	github.com/opentracing/opentracing-go v1.2.0
 	github.com/pingcap/failpoint v0.0.0-20210918120811-547c13e3eb00
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
-	github.com/pingcap/kvproto v0.0.0-20221104101942-09d82b914df1
+	github.com/pingcap/kvproto v0.0.0-20230110033234-055843a0a07d
 	github.com/pingcap/log v1.1.1-0.20221110025148-ca232912c9f3
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.11.0
@@ -39,7 +39,6 @@ require (
 	github.com/coreos/go-semver v0.3.0 // indirect
 	github.com/coreos/go-systemd/v22 v22.3.2 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
-	github.com/elastic/gosigar v0.14.2 // indirect
 	github.com/golang/snappy v0.0.4 // indirect
 	github.com/matttproud/golang_protobuf_extensions v1.0.1 // indirect
 	github.com/onsi/ginkgo v1.16.5 // indirect
@@ -60,8 +59,7 @@ require (
 	stathat.com/c/consistent v1.0.0 // indirect
 )
 
-replace github.com/tikv/pd => github.com/tidblabs/pd v0.0.0-20221222021041-db3be941c254
-
-replace github.com/tikv/pd/client => github.com/tidblabs/pd/client v0.0.0-20221222021041-db3be941c254
-
-replace github.com/pingcap/kvproto => github.com/nolouch/kvproto v0.0.0-20221220074114-39f3378735d2
+replace (
+	github.com/tikv/pd => /Users/jiangyongbo/github/pd
+	github.com/tikv/pd/client => /Users/jiangyongbo/github/pd/client
+)
