@@ -85,6 +85,6 @@ func (res *ResponseInfo) ReadBytes() uint64 {
 	return uint64(res.readBytes)
 }
 
-func (res *ResponseInfo) KVCPUms() uint64 {
+func (res *ResponseInfo) KVCPUMs() uint64 {
 	return 10
 }
