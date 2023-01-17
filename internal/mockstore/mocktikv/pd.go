@@ -79,8 +79,8 @@ func NewPDClient(cluster *Cluster) pd.Client {
 	}
 }
 
-func (c *pdClient) LoadGlobalConfig(ctx context.Context, names []string) ([]pd.GlobalConfigItem, error) {
-	return nil, nil
+func (c *pdClient) LoadGlobalConfig(ctx context.Context, configPath string) ([]pd.GlobalConfigItem, int64, error) {
+	return nil, 0, nil
 }
 
 func (c *pdClient) StoreGlobalConfig(ctx context.Context, items []pd.GlobalConfigItem) error {
