@@ -316,3 +316,7 @@ func (c *pdClient) AcquireTokenBuckets(ctx context.Context, request *resource_ma
 func (c *pdClient) UpdateKeyspaceState(ctx context.Context, id uint32, state keyspacepb.KeyspaceState) (*keyspacepb.KeyspaceMeta, error) {
 	return nil, nil
 }
+
+func (c *pdClient) WatchResourceGroup(ctx context.Context, revision int64) (chan []*resource_manager.ResourceGroup, error) {
+	return nil, nil
+}
